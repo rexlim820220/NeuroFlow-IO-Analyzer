@@ -9,10 +9,13 @@ class MultiTaskPage(BaseView):
     def __init__(self, parent, controller):
         super().__init__(parent, controller, "Multiprocess vs Multihreading")
 
-        ctrl_frame = tk.Frame(self)
-        ctrl_frame.pack(pady=10)
+        self.ctrl_frame = tk.Frame(self)
+        self.ctrl_frame.pack(side = "top", fill = "x", pady=10)
 
-        self.btn_run = tk.Button(ctrl_frame, text="Start Experiment", command=self.start_test_thread)
+        self.canvas_container = tk.Frame(self, bg="gray")
+        self.canvas_container.pack(side="top", fill="both", expand=True, padx=20)
+
+        self.btn_run = tk.Button(self.ctrl_frame, text="Start Experiment", command=self.start_test_thread)
         self.btn_run.pack(side="left", padx=10)
 
         self.status_label = tk.Label(self, text="Click button to start...")
@@ -66,24 +69,27 @@ class MultiTaskPage(BaseView):
 
             self.after(0, lambda: self.draw_charts(modes, cpu_results, io_results))
 
-        except:
-            self.after(0, lambda: messagebox.showerror("Error"))
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror("Error", str(e)))
         finally:
             self.after(0, lambda: self.btn_run.config(state="normal"))
             self.after(0, lambda: self.status_label.config(text="Test finished!Displaying the diagram..."))
 
     def draw_charts(self, modes, cpu_res, io_res):
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        for widget in self.canvas_container.winfo_children():
+            widget.destroy()
+
+        self.fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 3.5))
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.canvas_frame)
         colors = ['#95a5a6', '#3498db', '#e74c3c']
 
         ax1.bar(modes, cpu_res, color=colors)
         ax1.set_title("CPU bound task (calculation)")
-        ax1.set_ylabel("seconds")
-        for i, v in enumerate(cpu_res):
-            ax1.text(i, v + 0.05, f"{v:.2f}s", ha='center')
 
         ax2.bar(modes, io_res, color=colors)
         ax2.set_title("I/O bound task (Sleep)")
-        ax2.set_ylabel("seconds")
-        for i, v in enumerate(io_res):
-            ax2.text(i, v + 0.05, f"{v:.2f}s", ha='center')
+
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        self.update_idletasks()

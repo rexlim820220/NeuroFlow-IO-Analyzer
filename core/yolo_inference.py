@@ -1,4 +1,6 @@
 import os
+import cv2
+from ultralytics import YOLO
 
 class ModelIterator:
     def __init__(self, model_dir):
@@ -16,3 +18,17 @@ class ModelIterator:
         else:
             raise StopIteration
 
+class YOLOLogic:
+    def __init__(self, model_path="yolov8n.pt"):
+        self.model = YOLO(model_path)
+
+    def predict(self, image_path):
+        results = self.model(image_path)
+
+        res_plotted = results[0].plot()
+
+        rgb_res = cv2.cvtColor(res_plotted, cv2.COLOR_RGB2BGR)
+
+        status = "OK"
+
+        return rgb_res, status

@@ -1,0 +1,5 @@
+*.png
+__pycache__/
+*.py[cod]
+*$py.class
+yolov8n.pt

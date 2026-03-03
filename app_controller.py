@@ -1,6 +1,8 @@
 import tkinter as tk
+from views.yolo_view import YoloPage
 from views.start_view import StartPage
 from views.opencv_view import OpenCVPage
+from views.multitask_view import MultiTaskPage
 
 class MainApp(tk.Tk):
     def __init__(self):
@@ -13,7 +15,7 @@ class MainApp(tk.Tk):
 
         self.frames = {}
 
-        for PageClass in (StartPage, OpenCVPage):
+        for PageClass in (StartPage, OpenCVPage, YoloPage, MultiTaskPage):
             name = PageClass.__name__
             frame = PageClass(parent=container, controller=self)
             self.frames[name] = frame
