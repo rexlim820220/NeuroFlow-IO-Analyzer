@@ -29,6 +29,6 @@ class YOLOLogic:
 
         rgb_res = cv2.cvtColor(res_plotted, cv2.COLOR_RGB2BGR)
 
-        status = "OK"
+        status = "OK" if len(results[0].boxes) > 0 else "NG (No Object)"
 
         return rgb_res, status

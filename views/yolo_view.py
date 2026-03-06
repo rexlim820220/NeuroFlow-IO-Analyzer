@@ -10,7 +10,7 @@ class YoloPage(BaseView):
 
         self.yolo = YOLOLogic()
 
-        tk.Button(self, text="Select image and perform YOLO prediction")
+        tk.Button(self, text="Select image and perform YOLO prediction", command=self.run_inference).pack(pady=10)
 
         self.res_label = tk.Label(self, text="Status: object detecting, please wait...")
         self.res_label.pack()
