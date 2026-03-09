@@ -3,7 +3,6 @@ import numpy as np
 import tkinter as tk
 from PIL import Image, ImageTk
 from views.base_view import BaseView
-from skimage.morphology import skeletonize
 from tkinter import filedialog, messagebox
 
 class OpenCVPage(BaseView):
@@ -51,7 +50,7 @@ class OpenCVPage(BaseView):
         self.panel.configure(image=self.tk_img, text="")
         self.panel.image = self.tk_img
 
-    def detect_glue_track(self, expand_distance = 20):
+    def detect_glue_track(self, expand_distance = 30):
         if self.current_cv_image is None:
             messagebox.showwarning("Warning", "Please read and process grayscale image")
             return
@@ -103,8 +102,26 @@ class OpenCVPage(BaseView):
             messagebox.showerror("Error", "輪廓數量不足，無法找到內圍！")
             return
 
-        inner_idx = sorted_indices[1]
-        inner_contour = contours[inner_idx]
+        outer_idx = sorted_indices[0]
+        outer_contour = contours[outer_idx]
+        outer_rect = cv2.boundingRect(outer_contour)
+
+        potential_inner_contour = []
+        for i in sorted_indices[1:]:
+            c = contours[i]
+            M = cv2.moments(c)
+            if M["m00"] == 0: continue
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+
+            if(outer_rect[0] < cx < outer_rect[0] + outer_rect[2] and
+               outer_rect[1] < cy < outer_rect[1] + outer_rect[3]):
+                potential_inner_contour.append(c)
+
+        if potential_inner_contour:
+            inner_contour = potential_inner_contour[0]
+        else:
+            inner_contour = contours[sorted_indices[1]]
 
         A = np.zeros(gray.shape[:2], dtype=np.uint8)
         cv2.drawContours(A, [inner_contour], -1, 255, -1)
@@ -114,25 +131,28 @@ class OpenCVPage(BaseView):
         if len(a_contours) == 0:
             messagebox.showerror("Error", "無法從 A 找到輪廓！")
             return
+        else:
+            print(f"{len(a_contours)}")
 
         max_a_contour = max(a_contours, key=cv2.contourArea)
         rect = cv2.minAreaRect(max_a_contour)
         box = cv2.boxPoints(rect)
         box = np.intp(box)
-        
+
         min_rect_mask = np.zeros(gray.shape[:2], dtype=np.uint8)
         cv2.fillPoly(min_rect_mask, [box], 255)
-        show_step(min_rect_mask, "7. Min Rect Filled Mask")
+        A_prime = cv2.erode(min_rect_mask, None, iterations=1)
 
-        newSize = (int)(expand_distance * 2 - 2)
+        show_step(A_prime, "7. eroded Rect Filled Mask")
+
         dilate_kernel = cv2.getStructuringElement(
             cv2.MORPH_RECT,
-            (newSize, newSize)
+            (expand_distance * 2 + 1, expand_distance * 2)
         )
         B = cv2.dilate(min_rect_mask, dilate_kernel)
         show_step(B, "8. Dilated Area (B)")
 
-        ring_mask = cv2.subtract(B, min_rect_mask)
+        ring_mask = cv2.subtract(B, A_prime)
         ring_region = cv2.bitwise_and(gradient, gradient, mask=ring_mask)
         show_step(ring_region, "9. Ring Region (AND with Gray)")
 
@@ -140,7 +160,7 @@ class OpenCVPage(BaseView):
         show_step(ring_binary, "10. Prep: Binary Ring for Detection")
 
         edges = cv2.Canny(ring_binary, 50, 150)
-        show_step(edges, "11: Canny Edges for Hough")
+        show_step(edges, "11. Canny Edges for Hough")
 
         lines = cv2.HoughLinesP(
             edges,
@@ -153,14 +173,14 @@ class OpenCVPage(BaseView):
 
         if lines is None:
             result = "PASS (未偵測到明顯線段)"
-            final_display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            hough_display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         else:
             lines = lines.squeeze()
 
-            final_display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            hough_display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
             for line in lines:
                 x1, y1, x2, y2 = line
-                cv2.line(final_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.line(hough_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
         gap_threshold = 20
         num_gaps = 0
@@ -186,7 +206,44 @@ class OpenCVPage(BaseView):
         else:
             result = "PASS (膠軌連續)"
 
-        show_step(final_display, "12: final_display")
+        show_step(hough_display, "12. hough_display")
+
+        final_display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+        num_gaps = 0
+        if lines is None:
+            result = "PASS (未偵測到明顯線段)"
+        else:
+            lines = lines.squeeze()
+
+            for line in lines:
+                x1, y1, x2, y2 = line
+                cv2.line(final_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            gap_threshold = 20
+            endpoints = []
+            for line in lines:
+                endpoints.append((line[0], line[1]))
+                endpoints.append((line[2], line[3]))
+
+            from scipy.spatial.distance import cdist
+
+            if len(endpoints) > 0:
+                dist_matrix = cdist(endpoints, endpoints)
+                np.fill_diagonal(dist_matrix, np.inf)
+
+                min_dists = np.min(dist_matrix, axis=1)
+                gap_indices = np.where(min_dists > gap_threshold)[0]
+
+                num_gaps = len(gap_indices) // 2
+
+                box_size = 20
+                for idx in gap_indices:
+                    x, y = endpoints[idx]
+                    cv2.rectangle(final_display, (x - box_size // 2, y - box_size // 2),
+                                (x + box_size // 2, y + box_size // 2), (0, 0, 255), 2)
+
+        show_step(final_display, "13. final_display")
+
         tk_img = self.cv2_to_tkinter(final_display)
         self.panel.configure(image=tk_img)
         self.panel.image = tk_img
