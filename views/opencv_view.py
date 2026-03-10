@@ -70,7 +70,7 @@ class OpenCVPage(BaseView):
         ring_binary = self._build_ring_mask(gray, inner_contour, expand_distance, show_step)
 
         # 4. 線段檢測與斷點分析
-        hough_display, final_display, result = self._detect_lines_and_gaps(gray, ring_binary, show_step)
+        _, final_display, result = self._detect_lines_and_gaps(gray, ring_binary, show_step)
 
         # 5. 顯示結果
         tk_img = self.cv2_to_tkinter(final_display)
@@ -82,21 +82,20 @@ class OpenCVPage(BaseView):
 
     def _preprocess_image(self, gray, show_step):
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        show_step(blurred, "2. GaussianBlur")
+        show_step(blurred, "1. GaussianBlur")
 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        gradient = cv2.morphologyEx(blurred, cv2.MORPH_GRADIENT, kernel)
-        show_step(gradient, "3. Enhance contrast")
+        self.gradient = cv2.morphologyEx(blurred, cv2.MORPH_GRADIENT, kernel)
+        show_step(self.gradient, "2. Enhance contrast")
 
-        _, binary = cv2.threshold(gradient, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        _, binary = cv2.threshold(self.gradient, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         clean_binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
 
         kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         clean_binary = cv2.morphologyEx(clean_binary, cv2.MORPH_CLOSE, kernel_close, iterations=1)
-        show_step(clean_binary, "4. Clean Binary")
+        show_step(clean_binary, "3. Clean Binary")
 
         return clean_binary
-
 
     def _find_inner_contour(self, clean_binary, gray, show_step):
         contours, _ = cv2.findContours(clean_binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -104,7 +103,6 @@ class OpenCVPage(BaseView):
             messagebox.showerror("Error", "找不到輪廓！")
             return None
 
-        # 面積排序 + 位置判斷
         areas = [cv2.contourArea(c) for c in contours]
         sorted_indices = np.argsort(areas)[::-1]
         if len(sorted_indices) < 2:
@@ -129,12 +127,11 @@ class OpenCVPage(BaseView):
 
         A = np.zeros(gray.shape[:2], dtype=np.uint8)
         cv2.drawContours(A, [inner_contour], -1, 255, -1)
-        show_step(A, "6. Filled Inner Area")
+        show_step(A, "4. Filled Inner Area")
         return inner_contour
 
-
     def _build_ring_mask(self, gray, inner_contour, expand_distance, show_step):
-        # 建立最小外接矩形
+        """建立最小外接矩形"""
         a_contours, _ = cv2.findContours(cv2.drawContours(np.zeros(gray.shape[:2], dtype=np.uint8),
                                                         [inner_contour], -1, 255, -1),
                                         cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -144,25 +141,33 @@ class OpenCVPage(BaseView):
 
         min_rect_mask = np.zeros(gray.shape[:2], dtype=np.uint8)
         cv2.fillPoly(min_rect_mask, [box], 255)
-        A_prime = cv2.erode(min_rect_mask, None, iterations=1)
-        show_step(A_prime, "7. eroded Rect Mask")
+        A_prime = cv2.erode(min_rect_mask, None, iterations=5)
+        show_step(A_prime, "5. eroded Rect Mask")
 
-        dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (expand_distance*2+1, expand_distance*2))
+        dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (expand_distance*2, expand_distance*2))
         B = cv2.dilate(min_rect_mask, dilate_kernel)
-        show_step(B, "8. Dilated Area")
+        show_step(B, "6. Dilated Area")
 
+        invert = 255 - self.gradient
         ring_mask = cv2.subtract(B, A_prime)
-        ring_region = cv2.bitwise_and(gray, gray, mask=ring_mask)
-        show_step(ring_region, "9. Ring Region")
+        ring_region = np.full_like(invert, 255)
+        ring_region[ring_mask > 0] = invert[ring_mask > 0]
+        show_step(ring_region, "7. Ring Region")
 
-        _, ring_binary = cv2.threshold(ring_region, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        show_step(ring_binary, "10. Ring Binary")
+        ring_binary = cv2.adaptiveThreshold(
+            ring_region,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            blockSize=11,
+            C=2
+        )
+        show_step(ring_binary, "8. Ring Binary")
         return ring_binary
-
 
     def _detect_lines_and_gaps(self, gray, ring_binary, show_step):
         edges = cv2.Canny(ring_binary, 50, 150)
-        show_step(edges, "11. Canny Edges")
+        show_step(edges, "9. Canny Edges")
 
         lines = cv2.HoughLinesP(edges, 1, np.pi/180, 30, minLineLength=30, maxLineGap=15)
         hough_display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
@@ -175,7 +180,6 @@ class OpenCVPage(BaseView):
                 x1, y1, x2, y2 = line
                 cv2.line(hough_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-            # gap 檢測 (端點距離矩陣)
             endpoints = [(line[0], line[1]) for line in lines] + [(line[2], line[3]) for line in lines]
             from scipy.spatial.distance import cdist
             dist_matrix = cdist(endpoints, endpoints)
@@ -186,14 +190,14 @@ class OpenCVPage(BaseView):
 
             for line in lines:
                 cv2.line(final_display, (line[0], line[1]), (line[2], line[3]), (0, 255, 0), 2)
-            for idx in gap_indices:
+            for idx in range(0 ,num_gaps):
                 x, y = endpoints[idx]
                 cv2.rectangle(final_display, (x-10, y-10), (x+10, y+10), (0, 0, 255), 2)
 
             result = f"NG (偵測到 {num_gaps} 個潛在斷點)" if num_gaps > 0 else "PASS (膠軌連續)"
 
-        show_step(hough_display, "12. Hough Display")
-        show_step(final_display, "13. Final Display")
+        show_step(hough_display, "10. Hough Display")
+        show_step(final_display, "11. Final Display")
         return hough_display, final_display, result
 
     def _show_step(self, img, title):
