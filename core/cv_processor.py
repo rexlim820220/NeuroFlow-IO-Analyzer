@@ -121,8 +121,12 @@ class GlueTrackDetector:
 
         max_contour = max(contours, key=cv2.contourArea)
 
-        hull = cv2.convexHull(max_contour)
+        x_min = max_contour[:, :, 0].min()
+        y_max = max_contour[:, :, 1].max()
+        left_bottom_corner = np.array([[[x_min, y_max]]])
+        new_cnt = np.vstack([max_contour, left_bottom_corner])
 
+        hull = cv2.convexHull(new_cnt)
         hull_mask = np.zeros(gray.shape, np.uint8)
 
         cv2.drawContours(hull_mask, [hull], -1, 255, -1)
@@ -135,7 +139,7 @@ class GlueTrackDetector:
 
         self._debug(show, A_prime, "6 Convex Hull")
 
-        outer = int(expand_distance * 2.2)
+        outer = int(expand_distance * 2.5)
 
         kernel_outer = cv2.getStructuringElement(cv2.MORPH_RECT, (outer, outer))
 
@@ -167,57 +171,27 @@ class GlueTrackDetector:
 
         self._debug(show, edges, "10 Edges")
 
-        lines = cv2.HoughLinesP(
-            edges,
-            1,
-            np.pi / 180,
-            30,
-            minLineLength=30,
-            maxLineGap=15,
-        )
-
         display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
         result = "PASS"
 
-        if lines is not None:
+        num_labels, labels = cv2.connectedComponents(edges, connectivity=8)
 
-            lines = lines.squeeze()
+        contours = []
+        for i in range(1, num_labels):
+            mask = (labels == i).astype(np.uint8)
+            contour, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            endpoints = []
-
-            for x1, y1, x2, y2 in lines:
-
-                cv2.line(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-                endpoints.append((x1, y1))
-                endpoints.append((x2, y2))
-
-            dist = cdist(endpoints, endpoints)
-
-            np.fill_diagonal(dist, np.inf)
-
-            min_dist = np.min(dist, axis=1)
-
-            gap_indices = np.where(min_dist > 20)[0]
-
-            for idx in gap_indices:
-
-                x, y = endpoints[idx]
-
-                cv2.rectangle(
-                    display,
-                    (x - 10, y - 10),
-                    (x + 10, y + 10),
-                    (0, 0, 255),
-                    2,
-                )
-
-            if len(gap_indices) > 0:
-                result = f"NG (偵測到 {len(gap_indices)//2} 個斷點)"
+            length = cv2.arcLength(contour[0], True)
+            if contour and length > 0:
+                contours.append((contour, length))
+        print("\n=== 排序後的結果 ===")
+        top20 = sorted(contours, key=lambda x: x[1], reverse=True)[:20]
+        for i, (contour, length) in enumerate(top20):
+            cv2.drawContours(display, contour, -1, [0, 255, 0], thickness=3)
+            print(f"Top {i} contour length = {length:.2f}")
 
         self._debug(show, display, "11 Final")
-
         return display, display, result
 
     # -----------------------------
