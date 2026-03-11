@@ -40,3 +40,29 @@ PyEdge-Lab-Integrator/
 ├── core/                  # 核心邏輯層 (OpenCV 處理、PLC 通訊)
 │   └── performance_lab.py
 └── assets/                # 模型權重與實驗數據
+```
+
+## 專案流程圖
+
+```mermaid
+flowchart TD
+
+A[開始: 輸入灰階影像] --> B[高斯模糊去雜訊]
+B --> C[形態學梯度增強對比]
+C --> D[Otsu 二值化 + 開運算清理]
+D --> E[輪廓檢測與排序]
+E --> F[選擇外圍與內圍輪廓]
+F --> G[填充內圍區域 A]
+G --> H[最小外接矩形 + 侵蝕 A′]
+H --> I[膨脹矩形得到 B]
+I --> J[計算環狀遮罩 (B - A′)]
+J --> K[提取環狀區域並二值化]
+K --> L[Canny 邊緣檢測]
+L --> M[HoughLinesP 線段檢測]
+M --> N[繪製 hough_display]
+N --> O[斷點檢測 (方法一: 線段距離)]
+O --> P[斷點檢測 (方法二: 端點距離矩陣)]
+P --> Q[標記斷點方框]
+Q --> R[顯示 final_display]
+R --> S[輸出檢測結果 PASS/NG]
+```
