@@ -1,4 +1,5 @@
 import tkinter as tk
+from pathlib import Path
 from views.base_view import BaseView
 from tkinter import filedialog, messagebox
 from core.cv_processor import GlueTrackDetector, ImageUtils, DebugViewer
@@ -7,9 +8,6 @@ class OpenCVPage(BaseView):
 
     def __init__(self, parent, controller):
         super().__init__(parent, controller, "OpenCV processing")
-
-        self.detector = GlueTrackDetector()
-        self.debug_viewer = DebugViewer(self)
 
         btn_frame = tk.Frame(self)
         btn_frame.pack(pady=10)
@@ -29,6 +27,9 @@ class OpenCVPage(BaseView):
 
         self.panel.pack(expand=True)
 
+        self.detector = GlueTrackDetector()
+        self.debug_viewer = DebugViewer(self)
+
         self.current_image = None
 
 
@@ -40,6 +41,8 @@ class OpenCVPage(BaseView):
 
         if not path:
             return
+
+        self.filename = Path(path).stem
 
         image = ImageUtils.load_gray(path)
 

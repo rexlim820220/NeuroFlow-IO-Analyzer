@@ -175,23 +175,87 @@ class GlueTrackDetector:
 
         result = "PASS"
 
-        num_labels, labels = cv2.connectedComponents(edges, connectivity=8)
-
         contours = []
-        for i in range(1, num_labels):
-            mask = (labels == i).astype(np.uint8)
-            contour, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        num_labels, labels = cv2.connectedComponents(edges, connectivity=8)
+        for idx in range(1, num_labels):
 
-            length = cv2.arcLength(contour[0], True)
-            if contour and length > 0:
-                contours.append((contour, length))
-        print("\n=== 排序後的結果 ===")
+            mask = (labels == idx).astype(np.uint8) * 255
+            CN, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            if not CN:
+                continue
+
+            length = cv2.arcLength(CN[0], True)
+            if CN and length > 0:
+                contours.append((CN, length))
+
         top20 = sorted(contours, key=lambda x: x[1], reverse=True)[:20]
-        for i, (contour, length) in enumerate(top20):
-            cv2.drawContours(display, contour, -1, [0, 255, 0], thickness=3)
-            print(f"Top {i} contour length = {length:.2f}")
-
+        for i, (CN, length) in enumerate(top20):
+            cv2.drawContours(display, CN, -1, [0, 255, 0], thickness=3)
         self._debug(show, display, "11 Final")
+
+        graph_edges = []
+
+        for i, (cnt1, _) in enumerate(top20):
+            pts1 = cnt1[0].reshape(-1,2)
+
+            for j, (cnt2, _) in enumerate(top20):
+                if j <= i:
+                    continue
+
+                pts2 = cnt2[0].reshape(-1,2)
+
+                dist = cdist(pts1, pts2)
+                d = dist.min()
+
+                graph_edges.append((d, i, j))
+
+        graph_edges.sort()
+
+        parent = list(range(len(top20)))
+
+        def find(x):
+            while parent[x] != x:
+                x = parent[x]
+            return x
+
+        mst = []
+
+        for d,i,j in graph_edges:
+            ri = find(i)
+            rj = find(j)
+
+            if ri != rj:
+                parent[ri] = rj
+                mst.append((d,i,j))
+
+        MIN_GAP = 20
+        MAX_GAP = 120
+
+        real_gaps = 0
+
+        for d,i,j in mst:
+
+            if not (MIN_GAP <= d <= MAX_GAP):
+                continue
+
+            pts1 = top20[i][0][0].reshape(-1,2)
+            pts2 = top20[j][0][0].reshape(-1,2)
+
+            dist = cdist(pts1, pts2)
+            idx = np.unravel_index(dist.argmin(), dist.shape)
+
+            p1 = pts1[idx[0]]
+            p2 = pts2[idx[1]]
+
+            cv2.line(display, tuple(p1), tuple(p2), (0,0,255), 5)
+
+            real_gaps += 1
+
+        result = f"NG (偵測到 {real_gaps} 個斷點)" if real_gaps > 0 else "PASS (膠軌連續)"
+        print(f"\n最終判斷: {result}")
+        self._debug(show, display, "12 Red Gaps")
+
         return display, display, result
 
     # -----------------------------
