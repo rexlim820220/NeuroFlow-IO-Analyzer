@@ -189,17 +189,17 @@ class GlueTrackDetector:
             if CN and length > 0:
                 contours.append((CN, length))
 
-        top20 = sorted(contours, key=lambda x: x[1], reverse=True)[:20]
-        for i, (CN, length) in enumerate(top20):
+        top60 = sorted(contours, key=lambda x: x[1], reverse=True)[:60]
+        for i, (CN, length) in enumerate(top60):
             cv2.drawContours(display, CN, -1, [0, 255, 0], thickness=3)
         self._debug(show, display, "11 Final")
 
         graph_edges = []
 
-        for i, (cnt1, _) in enumerate(top20):
+        for i, (cnt1, _) in enumerate(top60):
             pts1 = cnt1[0].reshape(-1,2)
 
-            for j, (cnt2, _) in enumerate(top20):
+            for j, (cnt2, _) in enumerate(top60):
                 if j <= i:
                     continue
 
@@ -212,7 +212,7 @@ class GlueTrackDetector:
 
         graph_edges.sort()
 
-        parent = list(range(len(top20)))
+        parent = list(range(len(top60)))
 
         def find(x):
             while parent[x] != x:
@@ -230,8 +230,8 @@ class GlueTrackDetector:
                 mst.append((d,i,j))
 
         MIN_GAP = 20
-        MAX_GAP = 120
-
+        MAX_GAP = 150
+        BOX_SIZE = 20
         real_gaps = 0
 
         for d,i,j in mst:
@@ -239,8 +239,8 @@ class GlueTrackDetector:
             if not (MIN_GAP <= d <= MAX_GAP):
                 continue
 
-            pts1 = top20[i][0][0].reshape(-1,2)
-            pts2 = top20[j][0][0].reshape(-1,2)
+            pts1 = top60[i][0][0].reshape(-1,2)
+            pts2 = top60[j][0][0].reshape(-1,2)
 
             dist = cdist(pts1, pts2)
             idx = np.unravel_index(dist.argmin(), dist.shape)
@@ -248,8 +248,13 @@ class GlueTrackDetector:
             p1 = pts1[idx[0]]
             p2 = pts2[idx[1]]
 
-            cv2.line(display, tuple(p1), tuple(p2), (0,0,255), 5)
+            mid_x = int((p1[0] + p2[0]) / 2)
+            mid_y = int((p1[1] + p2[1]) / 2)
 
+            top_left = (mid_x - BOX_SIZE, mid_y - BOX_SIZE)
+            bottom_right = (mid_x + BOX_SIZE, mid_y + BOX_SIZE)
+
+            cv2.rectangle(display, top_left, bottom_right, (0, 0, 255), 3)
             real_gaps += 1
 
         result = f"NG (偵測到 {real_gaps} 個斷點)" if real_gaps > 0 else "PASS (膠軌連續)"
