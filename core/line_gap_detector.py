@@ -29,8 +29,12 @@ class LineGapDetector:
     # =========================
     # Step 1: 邊緣偵測
     # =========================
-    def _detect_edges(self, binary):
-        return cv2.Canny(binary, 50, 150)
+    def _detect_edges(self, src):
+        edges = cv2.medianBlur(src, 1)
+        _, binary = cv2.threshold(
+            255-edges, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        return binary
 
     # =========================
     # Step 2: 取主要輪廓
@@ -150,7 +154,8 @@ class LineGapDetector:
                     if cos_theta < 0.3:
                         continue
 
-                self._draw_rect(image, p1, p2) #self.draw_line_and_points(image, p1, p2)
+                self._draw_rect(image, p1, p2)
+                self._draw_line_and_points(image, p1, p2)
                 real_gaps += 1
 
         self.debug(show, image, "11 Red Gaps")
@@ -172,15 +177,15 @@ class LineGapDetector:
 
         cv2.rectangle(image, tl, br, (0, 0, 255), 3)
 
-    def draw_line_and_points(self, image, p1, p2):
+    def _draw_line_and_points(self, image, p1, p2):
         """
         在 image 上畫出 p1 與 p2 的線段，並用圓圈標記兩點。
         顏色隨機指定。
         """
         import random
-        r = random.randint(100, 255)   # 紅色偏高
-        g = random.randint(0, 45)      # 綠色偏低
-        b = random.randint(45, 160)      # 藍色偏低
+        r = random.randint(0, 45)    # 紅色偏低
+        g = random.randint(100, 255) # 綠色偏高
+        b = random.randint(45, 160)  # 藍色偏低
         color = (b, g, r)
 
         # 畫線
@@ -191,5 +196,5 @@ class LineGapDetector:
         cv2.circle(image, tuple(p2), radius=3, color=color, thickness=-1)
 
         distance = np.linalg.norm(p1 - p2)
-        mid_point = ((p1[0]+p2[0])//2, (p1[1]+p2[1])//2+10)
+        mid_point = ((p1[0]+p2[0])//2+10, (p1[1]+p2[1])//2-20)
         cv2.putText(image, f"{distance:.2f}", mid_point, cv2.FONT_HERSHEY_COMPLEX, 1.2, (255, 127, 9), 3, cv2.LINE_AA)
