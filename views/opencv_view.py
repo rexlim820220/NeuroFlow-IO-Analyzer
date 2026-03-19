@@ -31,7 +31,7 @@ class OpenCVPage(BaseView):
         self.panel = tk.Label(self.img_container,
                               text="Image is not loaded yet",
                               bg="#333", fg="white")
-        self.panel.pack(expand=True)
+        self.panel.pack(fill="both", expand=True)
 
         # Debug viewer
         self.debug_viewer = DebugViewer(self)

@@ -158,29 +158,36 @@ class GlueTrackDetector:
 
         def shift_image_y(kernel, offset_y):
             img = cv2.dilate(hull_mask, kernel)
-            h, _ = img.shape[:2]
-            result = np.zeros_like(img)
+            h, w = img.shape[:2]
+            shifted = np.zeros_like(img)
             shift = abs(offset_y)
 
             if offset_y < 0:
-                result[:h-shift, :] = img[shift:, :]
+                shifted[:h-shift, :] = img[shift:, :]
             else:
-                result[shift:, :] = img[:h-shift, :]
+                shifted[shift:, :] = img[:h-shift, :]
+
+            center_x = w // 2
+            center_range = 35
+            left_bound = max(0, center_x - center_range)
+            right_bound = min(center_x + center_range, w)
+            result = img.copy()
+            result[:h//2, left_bound:right_bound] = shifted[:h//2, left_bound:right_bound]
             return result
 
-        inner_x, inner_y = int(expand_distance * 0.5), int(expand_distance * 0.55)
+        inner_x, inner_y = int(expand_distance * 0.5), int(expand_distance * 0.8)
 
         kernel_inner = cv2.getStructuringElement(cv2.MORPH_RECT, (inner_x, inner_y))
 
-        A_prime = shift_image_y(kernel_inner, -4)
+        A_prime = shift_image_y(kernel_inner, -5)
 
         self._debug(show, A_prime, "6 Convex Hull")
 
-        outer_x, outer_y = int(expand_distance * 2), int(expand_distance * 2.5)
+        outer_x, outer_y = int(expand_distance * 1.8), int(expand_distance * 2)
 
         kernel_outer = cv2.getStructuringElement(cv2.MORPH_RECT, (outer_x, outer_y))
 
-        B = shift_image_y(kernel_outer, -10)
+        B = shift_image_y(kernel_outer, -15)
 
         self._debug(show, B, "7 Dilated")
 

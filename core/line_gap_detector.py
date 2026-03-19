@@ -30,9 +30,8 @@ class LineGapDetector:
     # Step 1: 邊緣偵測
     # =========================
     def _detect_edges(self, src):
-        edges = cv2.medianBlur(src, 1)
         _, binary = cv2.threshold(
-            255-edges, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+            255-src, 0, 255, cv2.THRESH_BINARY
         )
         return binary
 
@@ -72,6 +71,14 @@ class LineGapDetector:
     # Step 4: 計算 gap
     # =========================
     def _detect_gaps(self, contours, gray, show):
+
+        MIN_AREA = 200
+        TANGENT_TAIL = 25
+        MIN_COS_THETA = 0.3
+        MAX_DIST = 228
+        MIN_DIST = 9
+        MIN_HITS = 9
+
         if len(contours) < 2:
             return 0, cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
@@ -80,6 +87,9 @@ class LineGapDetector:
 
         scored_contours = []
         for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < MIN_AREA:
+                continue
             M = cv2.moments(cnt)
             if M["m00"] == 0: continue
             cx = int(M["m10"] / M["m00"])
@@ -103,9 +113,9 @@ class LineGapDetector:
 
         valid_scored.sort(key=lambda x: x['angle'])
 
-        image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         real_gaps = 0
         n = len(valid_scored)
+        image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         
         for k in range(n):
             s1 = valid_scored[k]
@@ -128,12 +138,12 @@ class LineGapDetector:
                     gray[int(pt[1]), int(pt[0])] > 0
                     for pt in line_samples
                 )
-                if hits > 9:
+                if hits > MIN_HITS:
                     continue
 
                 def get_tangent_vector(cnt, anchor_pt):
                     dists = np.linalg.norm(cnt.reshape(-1, 2) - anchor_pt, axis=1)
-                    tail_pts = cnt.reshape(-1, 2)[dists.argsort()[:25]]
+                    tail_pts = cnt.reshape(-1, 2)[dists.argsort()[:TANGENT_TAIL]]
                     if len(tail_pts) < 2: return None
                     [vx, vy, _, _] = cv2.fitLine(tail_pts, cv2.DIST_L2, 0, 0.01, 0.01)
                     return np.array([vx[0], vy[0]])
@@ -142,16 +152,16 @@ class LineGapDetector:
                 
                 v_gap = (p2 - p1).astype(float)
                 v_gap_norm = np.linalg.norm(v_gap)
-                if v_gap_norm < 9:
+                if v_gap_norm < MIN_DIST:
                     continue
-                if v_gap_norm > 228:
+                if v_gap_norm > MAX_DIST:
                     continue
                 elif v_gap_norm > 0:
                     v_gap /= v_gap_norm
                 
                 if v1 is not None:
                     cos_theta = abs(np.dot(v1.flatten(), v_gap.flatten()))
-                    if cos_theta < 0.3:
+                    if cos_theta < MIN_COS_THETA:
                         continue
 
                 self._draw_rect(image, p1, p2)
@@ -159,7 +169,7 @@ class LineGapDetector:
                 real_gaps += 1
 
         self.debug(show, image, "11 Red Gaps")
-        result_text = f"{self.filename} NG (偵測到{real_gaps}個潛在溢膠點)" if real_gaps > 0 else "PASS"
+        result_text = f"{self.filename} NG (偵測到{real_gaps}個潛在溢膠點)" if real_gaps > 0 else f"{self.filename} PASS"
         print(f"{result_text}")
         return real_gaps, image
 
