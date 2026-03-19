@@ -9,6 +9,12 @@ class OpenCVPage(BaseView):
     def __init__(self, parent, controller):
         super().__init__(parent, controller, "OpenCV processing")
 
+        # Initialize attributes
+        self.filename = None
+        self.current_image = None
+        self.detector = None
+
+        # Buttons
         btn_frame = tk.Frame(self)
         btn_frame.pack(pady=10)
 
@@ -18,23 +24,20 @@ class OpenCVPage(BaseView):
         tk.Button(btn_frame, text="2. Detect glue track",
                   command=self.detect_glue_track).pack(side="bottom", padx=5)
 
+        # Image container
         self.img_container = tk.Frame(self, bg="#333")
         self.img_container.pack(fill="both", expand=True, padx=20, pady=20)
 
         self.panel = tk.Label(self.img_container,
                               text="Image is not loaded yet",
                               bg="#333", fg="white")
-
         self.panel.pack(expand=True)
 
-        self.detector = GlueTrackDetector()
+        # Debug viewer
         self.debug_viewer = DebugViewer(self)
-
-        self.current_image = None
 
 
     def process_open_image(self):
-
         path = filedialog.askopenfilename(
             filetypes=[("Image files", "*.jpg *.png *.jpeg")]
         )
@@ -42,10 +45,10 @@ class OpenCVPage(BaseView):
         if not path:
             return
 
+        # Update filename and detector
         self.filename = Path(path).stem
 
         image = ImageUtils.load_gray(path)
-
         if image is None:
             messagebox.showerror("Error", "Fail to load Image")
             return
@@ -53,13 +56,14 @@ class OpenCVPage(BaseView):
         self.current_image = ImageUtils.resize_long_side(image, 2000)
 
         tk_img = ImageUtils.cv2_to_tk(self.current_image)
-
         self.panel.configure(image=tk_img, text="")
         self.panel.image = tk_img
 
+        # Re-initialize detector with the new filename
+        self.detector = GlueTrackDetector(self.filename)
+
 
     def detect_glue_track(self):
-
         if self.current_image is None:
             messagebox.showwarning("Warning", "Please load image first")
             return
@@ -70,7 +74,6 @@ class OpenCVPage(BaseView):
         )
 
         tk_img = ImageUtils.cv2_to_tk(result_img)
-
         self.panel.configure(image=tk_img)
         self.panel.image = tk_img
 

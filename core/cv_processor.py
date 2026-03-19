@@ -1,9 +1,16 @@
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
-from scipy.spatial.distance import cdist
+from core.line_gap_detector import LineGapDetector
 
 class GlueTrackDetector:
+
+    def __init__(self, filename):
+        self.line_gap_detector = LineGapDetector(
+            min_area=20,
+            filename=filename,
+            debug=self._debug
+        )
 
     def detect(self, gray, expand_distance=30, debug_callback=None):
 
@@ -20,11 +27,29 @@ class GlueTrackDetector:
             gray, inner_contour, expand_distance, debug_callback
         )
 
-        _, final_display, result = self._detect_lines_and_gaps(
+        final_display_gap, result_gap = self.line_gap_detector.detect(
             gray, ring_binary, debug_callback
         )
 
-        return final_display, result
+        final_display_overflow, result_overflow = self.detect_glue_overflow(
+            gray, ring_binary, debug_callback
+        )
+
+        result_texts = []
+
+        if result_gap > 0:
+            result_texts.append(f"NG (偵測到 {result_gap} 個斷點)")
+        if result_overflow > 0:
+            result_texts.append(f"NG (偵測到 {result_overflow} 個潛在溢膠點)")
+
+        result_text = "\n".join(result_texts)
+
+        if not result_texts:
+            result_texts.append("PASS (膠軌連續)")
+
+        final_display = cv2.addWeighted(final_display_gap, 0.5, final_display_overflow, 0.5, 0)
+
+        return final_display, result_text
 
     # -----------------------------
     # 1 preprocess
@@ -131,19 +156,31 @@ class GlueTrackDetector:
 
         cv2.drawContours(hull_mask, [hull], -1, 255, -1)
 
-        inner = int(expand_distance * 0.8)
+        def shift_image_y(kernel, offset_y):
+            img = cv2.dilate(hull_mask, kernel)
+            h, _ = img.shape[:2]
+            result = np.zeros_like(img)
+            shift = abs(offset_y)
 
-        kernel_inner = cv2.getStructuringElement(cv2.MORPH_RECT, (inner, inner))
+            if offset_y < 0:
+                result[:h-shift, :] = img[shift:, :]
+            else:
+                result[shift:, :] = img[:h-shift, :]
+            return result
 
-        A_prime = cv2.dilate(hull_mask, kernel_inner)
+        inner_x, inner_y = int(expand_distance * 0.5), int(expand_distance * 0.55)
+
+        kernel_inner = cv2.getStructuringElement(cv2.MORPH_RECT, (inner_x, inner_y))
+
+        A_prime = shift_image_y(kernel_inner, -4)
 
         self._debug(show, A_prime, "6 Convex Hull")
 
-        outer = int(expand_distance * 2.5)
+        outer_x, outer_y = int(expand_distance * 2), int(expand_distance * 2.5)
 
-        kernel_outer = cv2.getStructuringElement(cv2.MORPH_RECT, (outer, outer))
+        kernel_outer = cv2.getStructuringElement(cv2.MORPH_RECT, (outer_x, outer_y))
 
-        B = cv2.dilate(hull_mask, kernel_outer)
+        B = shift_image_y(kernel_outer, -10)
 
         self._debug(show, B, "7 Dilated")
 
@@ -162,106 +199,38 @@ class GlueTrackDetector:
         return ring_binary
 
     # -----------------------------
-    # 4 line detect
+    # 5 glue overflow detect
     # -----------------------------
 
-    def _detect_lines_and_gaps(self, gray, ring_binary, show):
+    def detect_glue_overflow(self, original_gray, ring_binary, show=True):
 
-        edges = cv2.Canny(ring_binary, 50, 150)
+        _, overflow_mask = cv2.threshold(
+            ring_binary, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        display = cv2.cvtColor(original_gray, cv2.COLOR_GRAY2BGR)
+        num_labels, labels = cv2.connectedComponents(overflow_mask)
 
-        self._debug(show, edges, "10 Edges")
+        overflow_count = 0
+        h_img, w_img = display.shape[:2]
 
-        display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-
-        result = "PASS"
-
-        contours = []
-        num_labels, labels = cv2.connectedComponents(edges, connectivity=8)
-        for idx in range(1, num_labels):
-
-            mask = (labels == idx).astype(np.uint8) * 255
-            CN, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-            if not CN:
-                continue
-
-            length = cv2.arcLength(CN[0], True)
-            if CN and length > 0:
-                contours.append((CN, length))
-
-        top60 = sorted(contours, key=lambda x: x[1], reverse=True)[:60]
-        for i, (CN, length) in enumerate(top60):
-            cv2.drawContours(display, CN, -1, [0, 255, 0], thickness=3)
-        self._debug(show, display, "11 Final")
-
-        graph_edges = []
-
-        for i, (cnt1, _) in enumerate(top60):
-            pts1 = cnt1[0].reshape(-1,2)
-
-            for j, (cnt2, _) in enumerate(top60):
-                if j <= i:
+        for idx in range(1, num_labels-1):
+            segment_mask = (labels == idx).astype(np.uint8) * 255
+            ov_cnts, _ = cv2.findContours(segment_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for o_cnt in ov_cnts:
+                area = cv2.contourArea(o_cnt)
+                if area < 10:
                     continue
+                x, y, w, h = cv2.boundingRect(o_cnt)
+                if x <= 0 or y <= 0 or (x + w) >= w_img or (y + h) >= h_img:
+                    continue
+                overflow_count += 1
 
-                pts2 = cnt2[0].reshape(-1,2)
+                cv2.rectangle(display, (x-15, y-15), (x+w+15, y+h+15), (0, 100, 255), 3)
 
-                dist = cdist(pts1, pts2)
-                d = dist.min()
+        if show:
+            self._debug(show, display, "12 Overflow Final")
 
-                graph_edges.append((d, i, j))
-
-        graph_edges.sort()
-
-        parent = list(range(len(top60)))
-
-        def find(x):
-            while parent[x] != x:
-                x = parent[x]
-            return x
-
-        mst = []
-
-        for d,i,j in graph_edges:
-            ri = find(i)
-            rj = find(j)
-
-            if ri != rj:
-                parent[ri] = rj
-                mst.append((d,i,j))
-
-        MIN_GAP = 20
-        MAX_GAP = 150
-        BOX_SIZE = 20
-        real_gaps = 0
-
-        for d,i,j in mst:
-
-            if not (MIN_GAP <= d <= MAX_GAP):
-                continue
-
-            pts1 = top60[i][0][0].reshape(-1,2)
-            pts2 = top60[j][0][0].reshape(-1,2)
-
-            dist = cdist(pts1, pts2)
-            idx = np.unravel_index(dist.argmin(), dist.shape)
-
-            p1 = pts1[idx[0]]
-            p2 = pts2[idx[1]]
-
-            mid_x = int((p1[0] + p2[0]) / 2)
-            mid_y = int((p1[1] + p2[1]) / 2)
-
-            top_left = (mid_x - BOX_SIZE, mid_y - BOX_SIZE)
-            bottom_right = (mid_x + BOX_SIZE, mid_y + BOX_SIZE)
-
-            cv2.rectangle(display, top_left, bottom_right, (0, 0, 255), 3)
-            real_gaps += 1
-
-        result = f"NG (偵測到 {real_gaps} 個斷點)" if real_gaps > 0 else "PASS (膠軌連續)"
-        print(f"\n最終判斷: {result}")
-        self._debug(show, display, "12 Red Gaps")
-
-        return display, display, result
+        return display, overflow_count
 
     # -----------------------------
     # debug helper
