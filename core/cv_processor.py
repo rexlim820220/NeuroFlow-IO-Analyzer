@@ -210,27 +210,44 @@ class GlueTrackDetector:
 
     def detect_glue_overflow(self, original_gray, ring_binary, show=True):
 
-        _, overflow_mask = cv2.threshold(
-            ring_binary, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        _, ring_binary = cv2.threshold(
+            255-ring_binary, 100, 255, cv2.THRESH_BINARY
         )
-        display = cv2.cvtColor(original_gray, cv2.COLOR_GRAY2BGR)
-        num_labels, labels = cv2.connectedComponents(overflow_mask)
+        erode = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
+        eroded = cv2.erode(ring_binary, erode)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 9))
+        merged_mask = cv2.morphologyEx(
+            eroded,
+            cv2.MORPH_CLOSE,
+            kernel,
+            iterations=2
+        )
+
+        merged_mask = cv2.morphologyEx(merged_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        self._debug(show, merged_mask, "11 Refined Mask")
+        overflow_mask_uint8 = merged_mask.astype(np.uint8) * 255
+
+        num_labels, labels, _, _ = cv2.connectedComponentsWithStats(
+            overflow_mask_uint8.astype(np.uint8), connectivity=8
+        )
 
         overflow_count = 0
+        display = cv2.cvtColor(original_gray, cv2.COLOR_GRAY2BGR)
         h_img, w_img = display.shape[:2]
 
-        for idx in range(1, num_labels-1):
+        for idx in range(1, num_labels):
             segment_mask = (labels == idx).astype(np.uint8) * 255
             ov_cnts, _ = cv2.findContours(segment_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for o_cnt in ov_cnts:
                 area = cv2.contourArea(o_cnt)
-                if area < 10:
+                print(f"{area:.2f}")
+                if area < 200 or area > 2000:
                     continue
                 x, y, w, h = cv2.boundingRect(o_cnt)
                 if x <= 0 or y <= 0 or (x + w) >= w_img or (y + h) >= h_img:
                     continue
                 overflow_count += 1
-
                 cv2.rectangle(display, (x-15, y-15), (x+w+15, y+h+15), (0, 100, 255), 3)
 
         if show:
