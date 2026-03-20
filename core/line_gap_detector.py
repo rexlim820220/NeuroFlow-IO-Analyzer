@@ -169,8 +169,6 @@ class LineGapDetector:
                 real_gaps += 1
 
         self.debug(show, image, "11 Red Gaps")
-        result_text = f"{self.filename} NG (偵測到{real_gaps}個潛在溢膠點)" if real_gaps > 0 else f"{self.filename} PASS"
-        print(f"{result_text}")
         return real_gaps, image
 
     def _draw_rect(self, image, p1, p2):

@@ -38,14 +38,14 @@ class GlueTrackDetector:
         result_texts = []
 
         if result_gap > 0:
-            result_texts.append(f"NG (偵測到 {result_gap} 個斷點)")
+            result_texts.append(f"偵測到 {result_gap} 個斷點")
         if result_overflow > 0:
-            result_texts.append(f"NG (偵測到 {result_overflow} 個潛在溢膠點)")
-
-        result_text = "\n".join(result_texts)
+            result_texts.append(f"偵測到 {result_overflow} 個潛在溢膠點")
 
         if not result_texts:
             result_texts.append("PASS (膠軌連續)")
+
+        result_text = " | ".join(result_texts)
 
         final_display = cv2.addWeighted(final_display_gap, 0.5, final_display_overflow, 0.5, 0)
 
@@ -157,37 +157,36 @@ class GlueTrackDetector:
         cv2.drawContours(hull_mask, [hull], -1, 255, -1)
 
         def shift_image_y(kernel, offset_y):
+            """Shift the whole mask upward by offset_y,
+            with the central band shifted by 2*offset_y."""
             img = cv2.dilate(hull_mask, kernel)
             h, w = img.shape[:2]
-            shifted = np.zeros_like(img)
-            shift = abs(offset_y)
 
-            if offset_y < 0:
-                shifted[:h-shift, :] = img[shift:, :]
-            else:
-                shifted[shift:, :] = img[:h-shift, :]
+            shifted = np.roll(img, -offset_y, axis=0)
 
-            center_x = w // 2
-            center_range = 35
-            left_bound = max(0, center_x - center_range)
-            right_bound = min(center_x + center_range, w)
-            result = img.copy()
-            result[:h//2, left_bound:right_bound] = shifted[:h//2, left_bound:right_bound]
+            center_x, center_range = w // 2, 35
+            left, right = max(0, center_x - center_range), min(center_x + center_range, w)
+
+            shifted_center = np.roll(img[:h//2, left:right], -2*offset_y, axis=0)
+
+            result = shifted.copy()
+            result[:h//2, left:right] = shifted_center
+
             return result
 
-        inner_x, inner_y = int(expand_distance * 0.5), int(expand_distance * 0.8)
+        inner_x, inner_y = int(expand_distance * 0.5), int(expand_distance * 0.7)
 
         kernel_inner = cv2.getStructuringElement(cv2.MORPH_RECT, (inner_x, inner_y))
 
-        A_prime = shift_image_y(kernel_inner, -5)
+        A_prime = shift_image_y(kernel_inner, 6)
 
         self._debug(show, A_prime, "6 Convex Hull")
 
-        outer_x, outer_y = int(expand_distance * 1.8), int(expand_distance * 2)
+        outer_x, outer_y = int(expand_distance * 1.6), int(expand_distance * 1.7)
 
         kernel_outer = cv2.getStructuringElement(cv2.MORPH_RECT, (outer_x, outer_y))
 
-        B = shift_image_y(kernel_outer, -15)
+        B = shift_image_y(kernel_outer, 7)
 
         self._debug(show, B, "7 Dilated")
 

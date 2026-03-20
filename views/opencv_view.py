@@ -78,3 +78,5 @@ class OpenCVPage(BaseView):
         self.panel.image = tk_img
 
         messagebox.showinfo("檢測結果", result_text)
+
+        print(self.filename, result_text)
