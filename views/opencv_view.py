@@ -19,10 +19,13 @@ class OpenCVPage(BaseView):
         btn_frame.pack(pady=10)
 
         tk.Button(btn_frame, text="1. Read and Open image",
-                  command=self.process_open_image).pack(side="top", padx=5)
+                  command=self.process_open_image).pack(padx=5)
 
         tk.Button(btn_frame, text="2. Detect glue track",
-                  command=self.detect_glue_track).pack(side="bottom", padx=5)
+                  command=self.detect_glue_track).pack(padx=5)
+
+        tk.Button(btn_frame, text="3.Debug",
+                  command=self.custom_omnidirectional_edge).pack(side="bottom", padx=5)
 
         # Image container
         self.img_container = tk.Frame(self, bg="#333")
@@ -62,7 +65,6 @@ class OpenCVPage(BaseView):
         # Re-initialize detector with the new filename
         self.detector = GlueTrackDetector(self.filename)
 
-
     def detect_glue_track(self):
         if self.current_image is None:
             messagebox.showwarning("Warning", "Please load image first")
@@ -80,3 +82,18 @@ class OpenCVPage(BaseView):
         messagebox.showinfo("檢測結果", result_text)
 
         print(self.filename, result_text)
+
+    def custom_omnidirectional_edge(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "Please load image first")
+            return
+
+        result_img = self.detector.calc_edge_offsets(
+            self.current_image,
+            self.debug_viewer.show_step,
+            3
+        )
+
+        tk_img = ImageUtils.cv2_to_tk(result_img)
+        self.panel.configure(image=tk_img)
+        self.panel.image = tk_img

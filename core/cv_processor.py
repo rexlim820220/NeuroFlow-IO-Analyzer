@@ -205,6 +205,43 @@ class GlueTrackDetector:
         return ring_binary
 
     # -----------------------------
+    # 4 Boundary shift
+    # -----------------------------
+    def calc_edge_offsets(self, ring_binary, show, d=2):
+
+        SHIFT_D = d
+        _, thresh_mask = cv2.threshold(ring_binary, 0, 255,
+                                    cv2.THRESH_BINARY)
+        self._debug(show, thresh_mask, "Step 1: Original Threshold")
+
+        mask = thresh_mask.astype(np.float32)
+        shift_u = np.roll(mask, -SHIFT_D, axis=0)
+        shift_d = np.roll(mask,  SHIFT_D, axis=0)
+        shift_l = np.roll(mask, -SHIFT_D, axis=1)
+        shift_r = np.roll(mask,  SHIFT_D, axis=1)
+
+        shifted_ud = np.maximum.reduce([shift_u, shift_d])
+        shifted_lr = np.maximum.reduce([shift_l, shift_r])
+
+        edge_v = shifted_ud - mask
+        edge_h = shifted_lr - mask
+
+        edge_visual = cv2.cvtColor(thresh_mask, cv2.COLOR_GRAY2BGR)
+        edge_visual[edge_v == 255] = [0, 0, 255]
+        edge_visual[edge_h == 255] = [255, 0, 0]
+        self._debug(show, edge_visual, "Step 2: Outer(Red) and Inner(Blue) Edges")
+
+        image = cv2.cvtColor(ring_binary, cv2.COLOR_GRAY2BGR)
+        red_mask = (edge_v == 255).astype(np.uint8) * 255
+        dilated_red = cv2.dilate(red_mask, np.ones((3,3), np.uint8), iterations=2)
+        blue_mask = (edge_h == 255).astype(np.uint8) * 255
+
+        gap_points = cv2.bitwise_and(dilated_red, blue_mask)
+        image[gap_points > 0] = [0, 255, 0]
+        self._debug(show, image, "Step 3: Label Gaps")
+        return image
+
+    # -----------------------------
     # 5 glue overflow detect
     # -----------------------------
 
@@ -250,8 +287,7 @@ class GlueTrackDetector:
                 overflow_count += 1
                 cv2.rectangle(display, (x-15, y-15), (x+w+15, y+h+15), (0, 100, 255), 3)
 
-        if show:
-            self._debug(show, display, "12 Overflow Final")
+        self._debug(show, display, "12 Overflow Final")
 
         return display, overflow_count
 
