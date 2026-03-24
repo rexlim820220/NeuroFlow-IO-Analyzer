@@ -162,7 +162,7 @@ class GlueTrackDetector:
             img = cv2.dilate(hull_mask, kernel)
             h, w = img.shape[:2]
 
-            shifted = np.roll(img, -offset_y, axis=0)
+            shifted = np.roll(img, -0.8*offset_y, axis=0)
 
             center_x, center_range = w // 2, 35
             left, right = max(0, center_x - center_range), min(center_x + center_range, w)
@@ -186,7 +186,7 @@ class GlueTrackDetector:
 
         kernel_outer = cv2.getStructuringElement(cv2.MORPH_RECT, (outer_x, outer_y))
 
-        B = shift_image_y(kernel_outer, 7)
+        B = shift_image_y(kernel_outer, 8)
 
         self._debug(show, B, "7 Dilated")
 
@@ -211,7 +211,7 @@ class GlueTrackDetector:
 
         SHIFT_D = d
         _, thresh_mask = cv2.threshold(ring_binary, 0, 255,
-                                    cv2.THRESH_BINARY)
+                                    cv2.THRESH_BINARY+cv2.THRESH_OTSU)
         self._debug(show, thresh_mask, "Step 1: Original Threshold")
 
         mask = thresh_mask.astype(np.float32)
@@ -233,10 +233,9 @@ class GlueTrackDetector:
 
         image = cv2.cvtColor(ring_binary, cv2.COLOR_GRAY2BGR)
         red_mask = (edge_v == 255).astype(np.uint8) * 255
-        dilated_red = cv2.dilate(red_mask, np.ones((3,3), np.uint8), iterations=2)
         blue_mask = (edge_h == 255).astype(np.uint8) * 255
 
-        gap_points = cv2.bitwise_and(dilated_red, blue_mask)
+        gap_points = cv2.bitwise_and(red_mask, blue_mask)
         image[gap_points > 0] = [0, 255, 0]
         self._debug(show, image, "Step 3: Label Gaps")
         return image

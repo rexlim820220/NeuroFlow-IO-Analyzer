@@ -76,11 +76,12 @@ class LineGapDetector:
         TANGENT_TAIL = 25
         MIN_COS_THETA = 0.3
         MAX_DIST = 228
-        MIN_DIST = 9
+        MIN_DIST = 1
         MIN_HITS = 9
 
+        image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         if len(contours) < 2:
-            return 0, cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            return 0, image
 
         img_h, img_w = gray.shape
         img_center = (img_w // 2, img_h // 2)
@@ -107,15 +108,14 @@ class LineGapDetector:
         median_radius = np.median(all_radii)
 
         valid_scored = [s for s in scored_contours 
-                        if median_radius * 0.7 < s['radius'] < median_radius * 1.3]
+                        if median_radius * 0.2 < s['radius'] < median_radius * 1.8]
 
-        if len(valid_scored) < 2: return 0, cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        if len(valid_scored) < 2: return 0, image
 
         valid_scored.sort(key=lambda x: x['angle'])
 
         real_gaps = 0
         n = len(valid_scored)
-        image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         
         for k in range(n):
             s1 = valid_scored[k]
