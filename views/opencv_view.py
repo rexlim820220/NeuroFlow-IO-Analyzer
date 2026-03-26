@@ -24,8 +24,14 @@ class OpenCVPage(BaseView):
         tk.Button(btn_frame, text="2. Detect glue track",
                   command=self.detect_glue_track).pack(padx=5)
 
-        tk.Button(btn_frame, text="3.Debug",
-                  command=self.custom_omnidirectional_edge).pack(side="bottom", padx=5)
+        tk.Button(btn_frame, text="3.Debug edge",
+                  command=self.custom_omnidirectional_edge).pack(padx=5)
+
+        tk.Button(btn_frame, text="4.Debug Gaps",
+                  command=self.debug_gaps).pack(side="bottom", padx=5)
+
+        tk.Button(btn_frame, text="5.Debug Overflow",
+                  command=self.debug_overflow).pack(side="bottom", padx=5)
 
         # Image container
         self.img_container = tk.Frame(self, bg="#333")
@@ -88,10 +94,52 @@ class OpenCVPage(BaseView):
             messagebox.showwarning("Warning", "Please load image first")
             return
 
-        result_img = self.detector.calc_edge_offsets(
+        result_img = self.detector.purify_frame_to_clean_rectangle(
             self.current_image,
             self.debug_viewer.show_step,
-            3
+            1
+        )
+
+        tk_img = ImageUtils.cv2_to_tk(result_img)
+        self.panel.configure(image=tk_img)
+        self.panel.image = tk_img
+
+    def debug_gaps(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "Please load image first")
+            return
+
+        def _debug(callback, img, title):
+
+            if callback is not None:
+                callback(img, title)
+
+        from core.line_gap_detector import LineGapDetector
+        self.line_gap_detector = LineGapDetector(
+            min_area=20,
+            filename=self.filename,
+            debug=_debug
+        )
+
+        result_img, _ = self.line_gap_detector.detect(
+            self.current_image,
+            255-self.current_image,
+            self.debug_viewer.show_step
+        )
+
+        tk_img = ImageUtils.cv2_to_tk(result_img)
+        self.panel.configure(image=tk_img)
+        self.panel.image = tk_img
+
+    def debug_overflow(self):
+        if self.current_image is None:
+            messagebox.showwarning("Warning", "Please load image first")
+            return
+
+        result_img, _ = self.detector.detect_glue_overflow(
+            self.current_image,
+            255-self.current_image,
+            self.debug_viewer.show_step,
         )
 
         tk_img = ImageUtils.cv2_to_tk(result_img)

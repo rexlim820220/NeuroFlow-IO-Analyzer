@@ -27,11 +27,17 @@ class GlueTrackDetector:
             gray, inner_contour, expand_distance, debug_callback
         )
 
-        final_display_gap, result_gap = self.line_gap_detector.detect(
+        final_display_overflow, result_overflow = self.detect_glue_overflow(
             gray, ring_binary, debug_callback
         )
 
-        final_display_overflow, result_overflow = self.detect_glue_overflow(
+        ring_binary = 255-self.purify_frame_to_clean_rectangle(
+            255-ring_binary,
+            debug_callback,
+            1
+        )
+
+        final_display_gap, result_gap = self.line_gap_detector.detect(
             gray, ring_binary, debug_callback
         )
 
@@ -162,9 +168,12 @@ class GlueTrackDetector:
             img = cv2.dilate(hull_mask, kernel)
             h, w = img.shape[:2]
 
-            shifted = np.roll(img, -0.8*offset_y, axis=0)
+            offset_x = int(0.075 * offset_y)
 
-            center_x, center_range = w // 2, 35
+            shifted = np.roll(img, -0.5*offset_y, axis=0)
+            shifted = np.roll(shifted, -offset_x, axis=1)
+
+            center_x, center_range = w // 2, 40
             left, right = max(0, center_x - center_range), min(center_x + center_range, w)
 
             shifted_center = np.roll(img[:h//2, left:right], -2*offset_y, axis=0)
@@ -174,11 +183,11 @@ class GlueTrackDetector:
 
             return result
 
-        inner_x, inner_y = int(expand_distance * 0.5), int(expand_distance * 0.7)
+        inner_x, inner_y = int(expand_distance * 0.5), int(expand_distance * 0.6)
 
         kernel_inner = cv2.getStructuringElement(cv2.MORPH_RECT, (inner_x, inner_y))
 
-        A_prime = shift_image_y(kernel_inner, 6)
+        A_prime = shift_image_y(kernel_inner, 7)
 
         self._debug(show, A_prime, "6 Convex Hull")
 
@@ -207,38 +216,67 @@ class GlueTrackDetector:
     # -----------------------------
     # 4 Boundary shift
     # -----------------------------
-    def calc_edge_offsets(self, ring_binary, show, d=2):
+    def purify_frame_to_clean_rectangle(self, edge_image, show, d=3):
+        if len(edge_image.shape) == 3:
+            binary = cv2.cvtColor(edge_image, cv2.COLOR_BGR2GRAY)
+        else:
+            binary = edge_image.copy()
 
-        SHIFT_D = d
-        _, thresh_mask = cv2.threshold(ring_binary, 0, 255,
-                                    cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        self._debug(show, thresh_mask, "Step 1: Original Threshold")
+        mask = binary.astype(np.float32)
 
-        mask = thresh_mask.astype(np.float32)
-        shift_u = np.roll(mask, -SHIFT_D, axis=0)
-        shift_d = np.roll(mask,  SHIFT_D, axis=0)
-        shift_l = np.roll(mask, -SHIFT_D, axis=1)
-        shift_r = np.roll(mask,  SHIFT_D, axis=1)
+        shift_u = np.roll(mask, -d, axis=0)
+        shift_d = np.roll(mask,  d, axis=0)
+        shift_l = np.roll(mask, -d, axis=1)
+        shift_r = np.roll(mask,  d, axis=1)
 
-        shifted_ud = np.maximum.reduce([shift_u, shift_d])
-        shifted_lr = np.maximum.reduce([shift_l, shift_r])
+        expanded = np.maximum.reduce([shift_u, shift_d, shift_l, shift_r])
+        stable_edge = np.minimum(expanded, mask)
 
-        edge_v = shifted_ud - mask
-        edge_h = shifted_lr - mask
+        stable_edge = (stable_edge > 0).astype(np.uint8) * 255
 
-        edge_visual = cv2.cvtColor(thresh_mask, cv2.COLOR_GRAY2BGR)
-        edge_visual[edge_v == 255] = [0, 0, 255]
-        edge_visual[edge_h == 255] = [255, 0, 0]
-        self._debug(show, edge_visual, "Step 2: Outer(Red) and Inner(Blue) Edges")
+        edge_up_down = stable_edge.copy()
+        edge_left_right = stable_edge.copy()
 
-        image = cv2.cvtColor(ring_binary, cv2.COLOR_GRAY2BGR)
-        red_mask = (edge_v == 255).astype(np.uint8) * 255
-        blue_mask = (edge_h == 255).astype(np.uint8) * 255
+        h, w = binary.shape
+        clean_mask = np.zeros((h, w), dtype=np.uint8)
 
-        gap_points = cv2.bitwise_and(red_mask, blue_mask)
-        image[gap_points > 0] = [0, 255, 0]
-        self._debug(show, image, "Step 3: Label Gaps")
-        return image
+        def keep_longest_lines(edge_map, is_horizontal=True, top_n=3):
+            edge_uint8 = (edge_map > 0).astype(np.uint8) * 255
+
+            num, labels, stats, _ = cv2.connectedComponentsWithStats(
+                edge_uint8, connectivity=8
+            )
+
+            print(f"Debug { 'horizontal' if is_horizontal else 'vertical' }: 找到 {num} 個連通體")
+
+            candidates = []
+            for i in range(1, num):
+                _, _, ww, hh = stats[i, cv2.CC_STAT_LEFT:cv2.CC_STAT_LEFT+4]
+                if is_horizontal:
+                    length = ww
+                else:
+                    length = hh
+                candidates.append((length, i))
+
+            candidates.sort(reverse=True)
+            res = np.zeros_like(edge_uint8, dtype=np.uint8)
+
+            for length, label in candidates[:top_n]:
+                print(f"Debug: 保留線段 label={label}, length={length}")
+                res[labels == label] = 255
+
+            return res
+
+        print('horizontal: ')
+        clean_mask = cv2.bitwise_or(clean_mask,
+                                        keep_longest_lines(edge_up_down, True, top_n=10))
+
+        print('vertical: ')
+        clean_mask = cv2.bitwise_or(clean_mask,
+                                        keep_longest_lines(edge_left_right, False, top_n=10))
+
+        self._debug(show, clean_mask, "Purify")
+        return clean_mask
 
     # -----------------------------
     # 5 glue overflow detect
@@ -261,7 +299,7 @@ class GlueTrackDetector:
         )
 
         merged_mask = cv2.morphologyEx(merged_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        self._debug(show, merged_mask, "11 Refined Mask")
+        self._debug(show, merged_mask, "13 Refined Mask")
         overflow_mask_uint8 = merged_mask.astype(np.uint8) * 255
 
         num_labels, labels, _, _ = cv2.connectedComponentsWithStats(
@@ -286,7 +324,7 @@ class GlueTrackDetector:
                 overflow_count += 1
                 cv2.rectangle(display, (x-15, y-15), (x+w+15, y+h+15), (0, 100, 255), 3)
 
-        self._debug(show, display, "12 Overflow Final")
+        self._debug(show, display, "14 Overflow Final")
 
         return display, overflow_count
 
