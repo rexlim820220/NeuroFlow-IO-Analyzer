@@ -31,11 +31,11 @@ class GlueTrackDetector:
             gray, ring_binary, debug_callback
         )
 
-        ring_binary = 255-self.purify_frame_to_clean_rectangle(
-            255-ring_binary,
-            debug_callback,
-            1
-        )
+        #ring_binary = 255-self.purify_frame_to_clean_rectangle(
+        #    255-ring_binary,
+        #    debug_callback,
+        #    1
+        #)
 
         final_display_gap, result_gap = self.line_gap_detector.detect(
             gray, ring_binary, debug_callback
@@ -63,7 +63,7 @@ class GlueTrackDetector:
 
     def _preprocess(self, gray, show):
 
-        blurred = cv2.GaussianBlur(gray, (35, 35), 0)
+        blurred = cv2.GaussianBlur(gray, (9, 9), 0)
         self._debug(show, blurred, "1 GaussianBlur")
 
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -162,9 +162,7 @@ class GlueTrackDetector:
 
         cv2.drawContours(hull_mask, [hull], -1, 255, -1)
 
-        def shift_image_y(kernel, offset_y):
-            """Shift the whole mask upward by offset_y,
-            with the central band shifted by 2*offset_y."""
+        def shift_image_y(kernel, offset_y, shift=False):
             img = cv2.dilate(hull_mask, kernel)
             h, w = img.shape[:2]
 
@@ -176,14 +174,17 @@ class GlueTrackDetector:
             center_x, center_range = w // 2, 40
             left, right = max(0, center_x - center_range), min(center_x + center_range, w)
 
-            shifted_center = np.roll(img[:h//2, left:right], -2*offset_y, axis=0)
+            if shift:
+                shifted_center = np.roll(img[:h//2, left:right], -2*offset_y, axis=0)
+            else:
+                shifted_center = img[:h//2, left:right]
 
             result = shifted.copy()
-            result[:h//2, left:right] = shifted_center
+            result[:h//2, left:right] = np.maximum(result[:h//2, left:right], shifted_center)
 
             return result
 
-        inner_x, inner_y = int(expand_distance * 0.5), int(expand_distance * 0.6)
+        inner_x, inner_y = int(expand_distance * 0.4), int(expand_distance * 0.45)
 
         kernel_inner = cv2.getStructuringElement(cv2.MORPH_RECT, (inner_x, inner_y))
 
@@ -195,7 +196,7 @@ class GlueTrackDetector:
 
         kernel_outer = cv2.getStructuringElement(cv2.MORPH_RECT, (outer_x, outer_y))
 
-        B = shift_image_y(kernel_outer, 8)
+        B = shift_image_y(kernel_outer, 9, True)
 
         self._debug(show, B, "7 Dilated")
 
@@ -211,7 +212,7 @@ class GlueTrackDetector:
 
         self._debug(show, ring_binary, "9 Ring Binary")
 
-        return ring_binary
+        return 255-ring_binary
 
     # -----------------------------
     # 4 Boundary shift
@@ -285,7 +286,7 @@ class GlueTrackDetector:
     def detect_glue_overflow(self, original_gray, ring_binary, show=True):
 
         _, ring_binary = cv2.threshold(
-            255-ring_binary, 100, 255, cv2.THRESH_BINARY
+            ring_binary, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU
         )
         erode = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
         eroded = cv2.erode(ring_binary, erode)
@@ -315,7 +316,6 @@ class GlueTrackDetector:
             ov_cnts, _ = cv2.findContours(segment_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for o_cnt in ov_cnts:
                 area = cv2.contourArea(o_cnt)
-                print(f"{area:.2f}")
                 if area < 200 or area > 2000:
                     continue
                 x, y, w, h = cv2.boundingRect(o_cnt)

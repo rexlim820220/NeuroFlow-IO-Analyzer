@@ -17,12 +17,74 @@ class LineGapDetector:
     # 主流程
     # =========================
     def detect(self, gray, ring_binary, show=False):
-        gaps = 0
+
+        d = 3
+        # -------- shift function --------
+        def shift(img, offset, axis):
+            res = np.zeros_like(img)
+
+            if axis == 0:  # vertical shift
+                if offset > 0:
+                    res[offset:] = img[:-offset]
+                else:
+                    res[:offset] = img[-offset:]
+
+            else:  # horizontal shift
+                if offset > 0:
+                    res[:, offset:] = img[:, :-offset]
+                else:
+                    res[:, :offset] = img[:, -offset:]
+
+            return res
+
+        # ============================
+        # detect vertical lines
+        # ============================
+
+        up = shift(ring_binary, -d, 0)
+        down = shift(ring_binary, d, 0)
+
+        vertical_support = np.maximum(up, down)
+        vertical_lines = np.minimum(ring_binary, vertical_support)
+
+        # ============================
+        # detect horizontal lines
+        # ============================
+
+        left = shift(ring_binary, -d, 1)
+        right = shift(ring_binary, d, 1)
+
+        horizontal_support = np.maximum(left, right)
+        horizontal_lines = np.minimum(ring_binary, horizontal_support)
+
+        # ============================
+        # expand perpendicular
+        # ============================
+
+        # vertical line → horizontal expand
+        v_expand = np.maximum.reduce([
+            shift(vertical_lines, -1, 1),
+            vertical_lines,
+            shift(vertical_lines, 1, 1)
+        ])
+
+        # horizontal line → vertical expand
+        h_expand = np.maximum.reduce([
+            shift(horizontal_lines, -1, 0),
+            horizontal_lines,
+            shift(horizontal_lines, 1, 0)
+        ])
+
+        ring_binary = np.maximum(v_expand, h_expand).astype(np.uint8) * 255
+
         edges = self._detect_edges(ring_binary)
-        self.debug(show, edges, "10 Edges")
+
+        self.debug(show, edges, f"10 Edges")
+
         contours = self._extract_major_contours(edges)
-        self._draw_contours(gray, contours, show)
+
         gaps, display = self._detect_gaps(contours, edges, gray, show)
+
         return display, gaps
 
     # =========================
@@ -30,7 +92,7 @@ class LineGapDetector:
     # =========================
     def _detect_edges(self, src):
         _, binary = cv2.threshold(
-            255-src, 0, 255, cv2.THRESH_BINARY
+            src, 5, 255, cv2.THRESH_BINARY
         )
         return binary
 
@@ -39,44 +101,48 @@ class LineGapDetector:
     # =========================
     def _extract_major_contours(self, edges):
         POLY_EPSILON_RATIO = 0.001
-        DYNAMIC_RATIO = 0.01
+        DYNAMIC_RATIO = 0.5
+
+        clean_solid_mask = np.zeros_like(edges)
         num_labels, labels = cv2.connectedComponents(edges, connectivity=8)
-        contours = []
 
         for idx in range(1, num_labels):
-            mask = (labels == idx).astype(np.uint8) * 255
-            cn, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            epsilon = POLY_EPSILON_RATIO * cv2.arcLength(cn[0], True)
-            approx = cv2.approxPolyDP(cn[0], epsilon, False)
+            comp_mask = (labels == idx).astype(np.uint8) * 255
+            cn, _ = cv2.findContours(comp_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if cn:
+                cv2.drawContours(clean_solid_mask, cn, -1, 255, thickness=cv2.FILLED)
+                cv2.drawContours(clean_solid_mask, cn, -1, 255, thickness=1)
+
+        final_contours = []
+        solid_cn, _ = cv2.findContours(clean_solid_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        temp_list = []
+        for c in solid_cn:
+            epsilon = POLY_EPSILON_RATIO * cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, epsilon, True)
             length = cv2.arcLength(approx, True)
+            if length > 0:
+                temp_list.append((approx, length))
 
-            if length:
-                contours.append((approx, length))
+        if not temp_list:
+            return []
 
-        avg_len = np.mean([c[1] for c in contours]) if contours else 0
-        contours = [c[0] for c in contours if c[1] > avg_len * DYNAMIC_RATIO]
-        return contours
+        avg_len = np.mean([c[1] for c in temp_list])
+        final_contours = [c[0] for c in temp_list if c[1] > avg_len * DYNAMIC_RATIO]
 
-    # =========================
-    # Step 3: 畫輪廓
-    # =========================
-    def _draw_contours(self, gray, contours, show):
-        image = gray
-        if len(gray.shape) == 2:
-            image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        for cnt in contours:
-            cv2.drawContours(image, [cnt], -1, (0, 255, 0), 1)
-        self.debug(show, image, "11 Green contours")
+        return final_contours
 
     # =========================
-    # Step 4: 計算 gap
+    # Step 3: 計算 gap
     # =========================
     def _detect_gaps(self, contours, edge, gray, show):
-        MIN_AREA = 100
+        MIN_AREA = 10
         TANGENT_TAIL = 25
         MIN_COS_THETA = 0.3
         NUM_SAMPLE = 20
         MIN_HITS = 11
+        MAX_DIST = 300
+        MIN_DIST = 0
 
         image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         if len(contours) < 2:
@@ -101,9 +167,12 @@ class LineGapDetector:
                 'radius': dist_to_center,
                 'angle': np.arctan2(cy - img_center[1], cx - img_center[0])
             })
+            cv2.drawContours(image, [cnt], -1, (0, 255, 0), 2)
 
         if len(scored_contours) < 2:
             return 0, image
+
+        self.debug(show, image, "11 Green contours")
 
         scored_contours.sort(key=lambda x: x['angle'])
 
@@ -113,17 +182,27 @@ class LineGapDetector:
         for k in range(n):
             s1 = scored_contours[k]
             s2 = scored_contours[(k + 1) % n]
+
             pts1 = s1['cnt'].reshape(-1, 2)
             pts2 = s2['cnt'].reshape(-1, 2)
 
             tree = KDTree(pts2)
             d, idx = tree.query(pts1, k=1)
             min_idx = d.argmin()
+            min_dist = d[min_idx]
+
+            if not (MIN_DIST <= min_dist <= MAX_DIST):
+                continue
+            else:
+                import random
+                color = (0, random.randint(170, 255), random.randint(155, 253))
+                cv2.putText(image, f"{k+1}", s1['center'], cv2.FONT_HERSHEY_COMPLEX, 1.2, color, 3, cv2.LINE_AA)
+                cv2.drawContours(image, [s1['cnt']], -1, color, 1)
 
             p1 = pts1[min_idx]
             p2 = pts2[idx[min_idx]]
 
-            line_samples = np.linspace(p1, p2, NUM_SAMPLE).astype(int)
+            '''line_samples = np.linspace(p1, p2, NUM_SAMPLE).astype(int)
             hits = sum(
                 edge[int(pt[1]), int(pt[0])] > 0
                 for pt in line_samples
@@ -135,7 +214,8 @@ class LineGapDetector:
             def get_tangent_vector(cnt, anchor_pt):
                 dists = np.linalg.norm(cnt.reshape(-1, 2) - anchor_pt, axis=1)
                 tail_pts = cnt.reshape(-1, 2)[dists.argsort()[:TANGENT_TAIL]]
-                if len(tail_pts) < 2: return None
+                if len(tail_pts) < 2:
+                    return None
                 [vx, vy, _, _] = cv2.fitLine(tail_pts, cv2.DIST_L2, 0, 0.01, 0.01)
                 return np.array([vx[0], vy[0]])
 
@@ -150,12 +230,13 @@ class LineGapDetector:
 
             cos_theta = abs(np.dot(v1.flatten(), v_gap.flatten()))
             if cos_theta < MIN_COS_THETA:
-                continue
+                continue'''
 
             self._draw_rect(image, p1, p2)
+            self._draw_line_and_points(image, p1, p2)
             real_gaps += 1
 
-        self.debug(show, image, "11 Red Gaps")
+        self.debug(show, image, "12 Red Gaps")
         return real_gaps, image
 
     def _draw_rect(self, image, p1, p2):
@@ -177,9 +258,9 @@ class LineGapDetector:
         顏色隨機指定。
         """
         import random
-        r = random.randint(0, 45)    # 紅色偏低
-        g = random.randint(100, 255) # 綠色偏高
-        b = random.randint(45, 160)  # 藍色偏低
+        r = random.randint(100, 255)# 紅色偏高
+        g = random.randint(0, 45)   # 綠色偏低
+        b = random.randint(45, 160) # 藍色偏低
         color = (b, g, r)
 
         # 畫線
@@ -189,6 +270,6 @@ class LineGapDetector:
         cv2.circle(image, tuple(p1), radius=3, color=color, thickness=-1)
         cv2.circle(image, tuple(p2), radius=3, color=color, thickness=-1)
 
-        #distance = np.linalg.norm(p1 - p2)
-        #mid_point = ((p1[0]+p2[0])//2+10, (p1[1]+p2[1])//2-20)
+        distance = np.linalg.norm(p1 - p2)
+        mid_point = ((p1[0]+p2[0])//2+10, (p1[1]+p2[1])//2-20)
         #cv2.putText(image, f"{distance:.2f}", mid_point, cv2.FONT_HERSHEY_COMPLEX, 1.2, (255, 127, 9), 3, cv2.LINE_AA)

@@ -4,3 +4,4 @@ __pycache__/
 *$py.class
 yolov8n.pt
 *.txt
+*.zip

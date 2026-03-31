@@ -123,7 +123,7 @@ class OpenCVPage(BaseView):
 
         result_img, _ = self.line_gap_detector.detect(
             self.current_image,
-            255-self.current_image,
+            self.current_image,
             self.debug_viewer.show_step
         )
 
@@ -138,7 +138,7 @@ class OpenCVPage(BaseView):
 
         result_img, _ = self.detector.detect_glue_overflow(
             self.current_image,
-            255-self.current_image,
+            self.current_image,
             self.debug_viewer.show_step,
         )
 
