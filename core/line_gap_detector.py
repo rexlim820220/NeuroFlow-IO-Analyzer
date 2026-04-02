@@ -132,8 +132,26 @@ class LineGapDetector:
 
         n = len(scored_contours)
         if n == 1:
-            '''To be fixed!!!'''
-            return 1, image
+            cnt = scored_contours[0]['cnt']
+            mask = np.zeros(gray.shape, dtype=np.uint8)
+            cv2.drawContours(mask, [cnt], -1, 255, -1)
+
+            hull_indices = cv2.convexHull(cnt, returnPoints=False)
+            defects = cv2.convexityDefects(cnt, hull_indices)
+
+            if defects is None:
+                return 0, image
+            idx = np.argmax(defects[:,0,3])
+            start_idx, end_idx, _, _ = defects[idx, 0]
+
+            p1 = cnt[start_idx][0]
+            p2 = cnt[end_idx][0]
+
+            # gap_dist = np.linalg.norm(p1 - p2)
+            # print(f"gap dist = {gap_dist}")
+            self._draw_rect(image, p1, p2)
+            self.debug(show, image, "12 Red Gaps")
+            return 1 if self._check_line_empty(p1, p2, edge) else 0, image
 
         image = np.zeros((gray.shape[0], gray.shape[1], 3), dtype=np.uint8)
         for k in range(n):
@@ -196,3 +214,18 @@ class LineGapDetector:
         #distance = np.linalg.norm(p1 - p2)
         #mid_point = ((p1[0]+p2[0])//2+10, (p1[1]+p2[1])//2-20)
         #cv2.putText(image, f"{distance:.2f}", mid_point, cv2.FONT_HERSHEY_COMPLEX, 1.2, (255, 127, 9), 3, cv2.LINE_AA)
+
+    def _check_line_empty(self, p1, p2, edge_mask):
+        """
+        沿著 p1 到 p2 採樣，如果中間大部分是黑色，則判定為真缺口
+        """
+        test_line = np.zeros_like(edge_mask)
+        cv2.line(test_line, p1, p2, 255, thickness=1)
+
+        line_indices = np.where(test_line == 255)
+        if len(line_indices[0]) == 0: return False
+
+        samples = edge_mask[line_indices]
+
+        empty_ratio = np.sum(samples == 0) / len(samples)
+        return empty_ratio > 0.8
