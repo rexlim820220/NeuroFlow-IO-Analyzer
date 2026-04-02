@@ -27,15 +27,10 @@ class GlueTrackDetector:
             gray, inner_contour, expand_distance, debug_callback
         )
 
-        final_display_overflow, result_overflow = self.detect_glue_overflow(
-            gray, ring_binary, debug_callback
-        )
-
-        #ring_binary = 255-self.purify_frame_to_clean_rectangle(
-        #    255-ring_binary,
-        #    debug_callback,
-        #    1
-        #)
+        result_overflow = 0
+        # final_display_overflow, result_overflow = self.detect_glue_overflow(
+        #     gray, ring_binary, debug_callback
+        # )
 
         final_display_gap, result_gap = self.line_gap_detector.detect(
             gray, ring_binary, debug_callback
@@ -53,9 +48,9 @@ class GlueTrackDetector:
 
         result_text = " | ".join(result_texts)
 
-        final_display = cv2.addWeighted(final_display_gap, 0.5, final_display_overflow, 0.5, 0)
+        #final_display = cv2.addWeighted(final_display_gap, 0.5, final_display_overflow, 0.5, 0)
 
-        return final_display, result_text
+        return final_display_gap, result_text
 
     # -----------------------------
     # 1 preprocess
@@ -285,30 +280,71 @@ class GlueTrackDetector:
 
     def detect_glue_overflow(self, original_gray, ring_binary, show=True):
 
-        _, ring_binary = cv2.threshold(
-            ring_binary, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU
+        ring_binary = cv2.adaptiveThreshold(
+            ring_binary, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, blockSize=11, C=-2
         )
-        erode = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
-        eroded = cv2.erode(ring_binary, erode)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
+        dilated = cv2.dilate(ring_binary, kernel)
+        self._debug(show, dilated, "13 Before Glue Detect")
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 9))
-        merged_mask = cv2.morphologyEx(
-            eroded,
-            cv2.MORPH_CLOSE,
-            kernel,
-            iterations=2
+        tophat_mask = cv2.morphologyEx(
+            ring_binary,
+            cv2.MORPH_TOPHAT,
+            kernel
         )
 
-        merged_mask = cv2.morphologyEx(merged_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        self._debug(show, merged_mask, "13 Refined Mask")
-        overflow_mask_uint8 = merged_mask.astype(np.uint8) * 255
-
-        num_labels, labels, _, _ = cv2.connectedComponentsWithStats(
-            overflow_mask_uint8.astype(np.uint8), connectivity=8
-        )
+        candidate_mask = cv2.subtract(dilated, tophat_mask)
+        self._debug(show, candidate_mask, "14 Candidate Mask")
 
         overflow_count = 0
-        display = cv2.cvtColor(original_gray, cv2.COLOR_GRAY2BGR)
+        #display = cv2.cvtColor(original_gray, cv2.COLOR_GRAY2BGR)
+        display = np.zeros((original_gray.shape[0], original_gray.shape[1], 3), dtype=np.uint8)
+
+        clean_solid_mask = np.zeros_like(original_gray)
+        num_labels, labels = cv2.connectedComponents(candidate_mask, connectivity=8)
+
+        for idx in range(1, num_labels):
+            comp_mask = (labels == idx).astype(np.uint8) * 255
+            cn, _ = cv2.findContours(comp_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+            if cn:
+                _, _, w, h = cv2.boundingRect(cn[0])
+                single_obj_mask = np.zeros_like(clean_solid_mask)
+                single_obj_mask[labels == idx] = 255
+                cv2.drawContours(clean_solid_mask, cn, -1, 255, thickness=cv2.FILLED)
+                kernel = np.ones((1, 1), np.uint8)
+                if w > h * 2.5:
+                    kernel = np.ones((5, 1), np.uint8)
+                elif h > w * 2.5:
+                    kernel = np.ones((1, 5), np.uint8)
+                thickened = cv2.dilate(single_obj_mask, kernel)
+                clean_solid_mask = cv2.bitwise_or(clean_solid_mask, thickened)
+
+        solid_cn, _ = cv2.findContours(clean_solid_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+        temp_list = []
+        for c in solid_cn:
+            epsilon = 1e-100 * cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, epsilon, True)
+            length = cv2.arcLength(approx, True)
+            if length > 0:
+                temp_list.append((approx, length))
+
+        if not temp_list:
+            return []
+
+        avg_len = np.mean([c[1] for c in temp_list])
+        contours = [c[0] for c in temp_list if c[1] > avg_len * 0.1]
+        for cnt in contours:
+            cv2.drawContours(display, [cnt], -1, (255, 255, 255), 2)
+
+        self._debug(show, display, "15 contours")
+
+        '''
+        num_labels, labels, _, _ = cv2.connectedComponentsWithStats(
+            candidate_mask.astype(np.uint8), connectivity=8
+        )
+
         h_img, w_img = display.shape[:2]
 
         for idx in range(1, num_labels):
@@ -324,7 +360,7 @@ class GlueTrackDetector:
                 overflow_count += 1
                 cv2.rectangle(display, (x-15, y-15), (x+w+15, y+h+15), (0, 100, 255), 3)
 
-        self._debug(show, display, "14 Overflow Final")
+        self._debug(show, display, "15 Overflow Final")'''
 
         return display, overflow_count
 
