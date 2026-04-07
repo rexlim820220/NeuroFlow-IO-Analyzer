@@ -250,8 +250,9 @@ class GlueTrackDetector:
 
         contours, _ = cv2.findContours(glue_candidate, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-        MIN_AREA = 150
+        MIN_AREA = 0
         MIN_SOLIDITY = 0.9
+        MIN_RATIO = 10
 
         print("================ Glue Overflow:================")
 
@@ -266,9 +267,10 @@ class GlueTrackDetector:
             aspect_ratio = max(w, h) / (min(w, h) + 1e-5)
             if solidity >= MIN_SOLIDITY: continue
             print(f"{i+1}-th contour solidity : {solidity:.2f} and aspect_ratio: {aspect_ratio:.2f}")
+            if aspect_ratio > MIN_RATIO: continue
             final_overflow_count += 1
             cv2.rectangle(display, (x, y), (x+w, y+h), (0, 100, 255), 2)
-            #cv2.putText(display, f"{i+1}", (x+w//2, y+h//-15), cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 100, 255), 3, cv2.LINE_AA)
+            cv2.putText(display, f"{i+1}", (x+w//2, y+h//-15), cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 100, 255), 3, cv2.LINE_AA)
 
         self._debug(show, display, "15 Glue Result")
 
