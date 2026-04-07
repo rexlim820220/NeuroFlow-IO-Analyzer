@@ -102,7 +102,6 @@ class GlueTrackDetector:
     # -----------------------------
 
     def _find_inner_contour(self, binary, gray, show):
-
         contours, _ = cv2.findContours(
             binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
         )
@@ -110,47 +109,52 @@ class GlueTrackDetector:
         if len(contours) == 0:
             return gray, None
 
-        areas = [cv2.contourArea(c) for c in contours]
-        sorted_idx = np.argsort(areas)[::-1]
+        TARGET_MIN_AREA = 1400000
+        TARGET_MAX_AREA = 1500000
 
-        outer = contours[sorted_idx[0]]
-        outer_rect = cv2.boundingRect(outer)
+        area_candidates = []
+        for c in contours:
+            area = cv2.contourArea(c)
+            if TARGET_MIN_AREA <= area <= TARGET_MAX_AREA:
+                area_candidates.append((area, c))
 
-        potential = []
+        area_candidates.sort(key=lambda x: x[0], reverse=True)
 
-        for i in sorted_idx[1:]:
+        final_inner = None
 
-            c = contours[i]
+        if area_candidates:
+            final_inner = area_candidates[0][1]
+            print(f"Target found by area range. Area: {area_candidates[0][0]}")
+        else:
+            print("Warning: No contour found in target area range. Using fallback logic.")
+            areas = [cv2.contourArea(c) for c in contours]
+            sorted_idx = np.argsort(areas)[::-1]
+            outer = contours[sorted_idx[0]]
+            outer_rect = cv2.boundingRect(outer)
 
-            M = cv2.moments(c)
+            potential = []
+            for i in sorted_idx[1:]:
+                c = contours[i]
+                M = cv2.moments(c)
+                if M["m00"] == 0: continue
+                cx, cy = int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
 
-            if M["m00"] == 0:
-                continue
+                if (outer_rect[0] < cx < outer_rect[0] + outer_rect[2] and
+                    outer_rect[1] < cy < outer_rect[1] + outer_rect[3]):
+                    potential.append(c)
 
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-
-            if (
-                outer_rect[0] < cx < outer_rect[0] + outer_rect[2]
-                and outer_rect[1] < cy < outer_rect[1] + outer_rect[3]
-            ):
-                potential.append(c)
-
-        inner = potential[0] if potential else contours[sorted_idx[1]]
+            final_inner = potential[0] if potential else contours[sorted_idx[1]]
+            print(f"Fallback Inner Area: {cv2.contourArea(final_inner)}")
 
         mask = np.zeros(gray.shape, np.uint8)
-
-        cv2.drawContours(mask, [inner], -1, 255, -1)
-
+        cv2.drawContours(mask, [final_inner], -1, 255, -1)
         final_mask = cv2.bitwise_not(mask)
 
         self._debug(show, final_mask, "4 Filled Inner")
-
         gray = cv2.bitwise_and(gray, gray, mask=final_mask)
-
         self._debug(show, gray, "5 Clean Gray")
 
-        return gray, inner
+        return gray, final_inner
 
     # -----------------------------
     # 3 build ring
