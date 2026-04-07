@@ -12,7 +12,7 @@ class GlueTrackDetector:
             debug=self._debug
         )
 
-    def detect(self, gray, expand_distance=30, debug_callback=None):
+    def detect(self, gray, debug_callback=None):
 
         clean_binary = self._preprocess(gray, debug_callback)
 
@@ -24,13 +24,12 @@ class GlueTrackDetector:
             return gray, "NG (找不到內圍)"
 
         ring_binary = self._build_ring_mask(
-            gray, inner_contour, expand_distance, debug_callback
+            gray, inner_contour, 30, debug_callback
         )
 
-        result_overflow = 0
-        # final_display_overflow, result_overflow = self.detect_glue_overflow(
-        #     gray, ring_binary, debug_callback
-        # )
+        final_display_overflow, result_overflow = self.detect_glue_overflow(
+            gray, ring_binary, debug_callback
+        )
 
         final_display_gap, result_gap = self.line_gap_detector.detect(
             gray, ring_binary, debug_callback
@@ -48,9 +47,28 @@ class GlueTrackDetector:
 
         result_text = " | ".join(result_texts)
 
-        #final_display = cv2.addWeighted(final_display_gap, 0.5, final_display_overflow, 0.5, 0)
+        final_display = cv2.addWeighted(final_display_gap, 0.5, final_display_overflow, 0.5, 0)
 
-        return final_display_gap, result_text
+        h, w = final_display.shape[:2]
+
+        (size1, _) = cv2.getTextSize(f"gap count: {result_gap}", cv2.FONT_HERSHEY_COMPLEX, 1.2, 2)
+        (size2, _) = cv2.getTextSize(f"overflow count: {result_overflow}", cv2.FONT_HERSHEY_COMPLEX, 1.2, 2)
+
+        x1 = (w - size1[0]) // 2
+        x2 = (w - size2[0]) // 2
+
+        y1 = h // 2
+        y2 = y1 + size1[1] + 20
+
+        cv2.putText(final_display, f"gap count: {result_gap}", (x1, y1),
+                    cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 0, 255), 2, cv2.LINE_AA)
+
+        cv2.putText(final_display, f"overflow count: {result_overflow}", (x2, y2),
+                    cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 100, 255), 2, cv2.LINE_AA)
+
+        self._debug(debug_callback, final_display, "16 Final Result")
+
+        return final_display, result_text
 
     # -----------------------------
     # 1 preprocess
@@ -179,7 +197,7 @@ class GlueTrackDetector:
 
             return result
 
-        inner_x, inner_y = int(expand_distance * 0.4), int(expand_distance * 0.45)
+        inner_x, inner_y = int(expand_distance * 0.25), int(expand_distance * 0.35)
 
         kernel_inner = cv2.getStructuringElement(cv2.MORPH_RECT, (inner_x, inner_y))
 
@@ -210,159 +228,53 @@ class GlueTrackDetector:
         return 255-ring_binary
 
     # -----------------------------
-    # 4 Boundary shift
-    # -----------------------------
-    def purify_frame_to_clean_rectangle(self, edge_image, show, d=3):
-        if len(edge_image.shape) == 3:
-            binary = cv2.cvtColor(edge_image, cv2.COLOR_BGR2GRAY)
-        else:
-            binary = edge_image.copy()
-
-        mask = binary.astype(np.float32)
-
-        shift_u = np.roll(mask, -d, axis=0)
-        shift_d = np.roll(mask,  d, axis=0)
-        shift_l = np.roll(mask, -d, axis=1)
-        shift_r = np.roll(mask,  d, axis=1)
-
-        expanded = np.maximum.reduce([shift_u, shift_d, shift_l, shift_r])
-        stable_edge = np.minimum(expanded, mask)
-
-        stable_edge = (stable_edge > 0).astype(np.uint8) * 255
-
-        edge_up_down = stable_edge.copy()
-        edge_left_right = stable_edge.copy()
-
-        h, w = binary.shape
-        clean_mask = np.zeros((h, w), dtype=np.uint8)
-
-        def keep_longest_lines(edge_map, is_horizontal=True, top_n=3):
-            edge_uint8 = (edge_map > 0).astype(np.uint8) * 255
-
-            num, labels, stats, _ = cv2.connectedComponentsWithStats(
-                edge_uint8, connectivity=8
-            )
-
-            print(f"Debug { 'horizontal' if is_horizontal else 'vertical' }: 找到 {num} 個連通體")
-
-            candidates = []
-            for i in range(1, num):
-                _, _, ww, hh = stats[i, cv2.CC_STAT_LEFT:cv2.CC_STAT_LEFT+4]
-                if is_horizontal:
-                    length = ww
-                else:
-                    length = hh
-                candidates.append((length, i))
-
-            candidates.sort(reverse=True)
-            res = np.zeros_like(edge_uint8, dtype=np.uint8)
-
-            for length, label in candidates[:top_n]:
-                print(f"Debug: 保留線段 label={label}, length={length}")
-                res[labels == label] = 255
-
-            return res
-
-        print('horizontal: ')
-        clean_mask = cv2.bitwise_or(clean_mask,
-                                        keep_longest_lines(edge_up_down, True, top_n=10))
-
-        print('vertical: ')
-        clean_mask = cv2.bitwise_or(clean_mask,
-                                        keep_longest_lines(edge_left_right, False, top_n=10))
-
-        self._debug(show, clean_mask, "Purify")
-        return clean_mask
-
-    # -----------------------------
-    # 5 glue overflow detect
+    # 4 glue overflow detect
     # -----------------------------
 
     def detect_glue_overflow(self, original_gray, ring_binary, show=True):
 
-        ring_binary = cv2.adaptiveThreshold(
-            ring_binary, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY, blockSize=11, C=-2
-        )
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
-        dilated = cv2.dilate(ring_binary, kernel)
-        self._debug(show, dilated, "13 Before Glue Detect")
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 9))
 
-        tophat_mask = cv2.morphologyEx(
-            ring_binary,
-            cv2.MORPH_TOPHAT,
-            kernel
-        )
+        tophat_mask = cv2.morphologyEx(ring_binary, cv2.MORPH_TOPHAT, kernel)
 
-        candidate_mask = cv2.subtract(dilated, tophat_mask)
-        self._debug(show, candidate_mask, "14 Candidate Mask")
+        _, glue_candidate  = cv2.threshold(tophat_mask, 250, 255, cv2.THRESH_BINARY)
 
-        overflow_count = 0
-        #display = cv2.cvtColor(original_gray, cv2.COLOR_GRAY2BGR)
-        display = np.zeros((original_gray.shape[0], original_gray.shape[1], 3), dtype=np.uint8)
+        self._debug(show, glue_candidate, "13 Glue Candidate")
 
-        clean_solid_mask = np.zeros_like(original_gray)
-        num_labels, labels = cv2.connectedComponents(candidate_mask, connectivity=8)
+        glue_candidate = cv2.dilate(glue_candidate, kernel)
 
-        for idx in range(1, num_labels):
-            comp_mask = (labels == idx).astype(np.uint8) * 255
-            cn, _ = cv2.findContours(comp_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-            if cn:
-                _, _, w, h = cv2.boundingRect(cn[0])
-                single_obj_mask = np.zeros_like(clean_solid_mask)
-                single_obj_mask[labels == idx] = 255
-                cv2.drawContours(clean_solid_mask, cn, -1, 255, thickness=cv2.FILLED)
-                kernel = np.ones((1, 1), np.uint8)
-                if w > h * 2.5:
-                    kernel = np.ones((5, 1), np.uint8)
-                elif h > w * 2.5:
-                    kernel = np.ones((1, 5), np.uint8)
-                thickened = cv2.dilate(single_obj_mask, kernel)
-                clean_solid_mask = cv2.bitwise_or(clean_solid_mask, thickened)
+        self._debug(show, glue_candidate, "14 Dilated Candidate")
 
-        solid_cn, _ = cv2.findContours(clean_solid_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        final_overflow_count = 0
+        display = cv2.cvtColor(original_gray, cv2.COLOR_GRAY2BGR)
 
-        temp_list = []
-        for c in solid_cn:
-            epsilon = 1e-100 * cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, epsilon, True)
-            length = cv2.arcLength(approx, True)
-            if length > 0:
-                temp_list.append((approx, length))
+        contours, _ = cv2.findContours(glue_candidate, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-        if not temp_list:
-            return []
+        MIN_AREA = 0
+        MIN_SOLIDITY = 0.9
+        MIN_RATIO = 10
 
-        avg_len = np.mean([c[1] for c in temp_list])
-        contours = [c[0] for c in temp_list if c[1] > avg_len * 0.1]
-        for cnt in contours:
-            cv2.drawContours(display, [cnt], -1, (255, 255, 255), 2)
+        print("================ Glue Overflow:================")
 
-        self._debug(show, display, "15 contours")
+        for i, cnt in enumerate(contours):
+            area = cv2.contourArea(cnt)
+            if area < MIN_AREA:
+                continue
+            hull = cv2.convexHull(cnt)
+            hull_area = cv2.contourArea(hull)
+            solidity = float(area) / hull_area if hull_area > 0 else 0
+            x, y, w, h = cv2.boundingRect(cnt)
+            aspect_ratio = max(w, h) / (min(w, h) + 1e-5)
+            if solidity >= MIN_SOLIDITY: continue
+            print(f"{i+1}-th contour solidity : {solidity:.2f} and aspect_ratio: {aspect_ratio:.2f}")
+            if aspect_ratio > MIN_RATIO: continue
+            final_overflow_count += 1
+            cv2.rectangle(display, (x, y), (x+w, y+h), (0, 100, 255), 2)
+            cv2.putText(display, f"{i+1}", (x+w//2, y+h//-15), cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 100, 255), 3, cv2.LINE_AA)
 
-        '''
-        num_labels, labels, _, _ = cv2.connectedComponentsWithStats(
-            candidate_mask.astype(np.uint8), connectivity=8
-        )
+        self._debug(show, display, "15 Glue Result")
 
-        h_img, w_img = display.shape[:2]
-
-        for idx in range(1, num_labels):
-            segment_mask = (labels == idx).astype(np.uint8) * 255
-            ov_cnts, _ = cv2.findContours(segment_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for o_cnt in ov_cnts:
-                area = cv2.contourArea(o_cnt)
-                if area < 200 or area > 2000:
-                    continue
-                x, y, w, h = cv2.boundingRect(o_cnt)
-                if x <= 0 or y <= 0 or (x + w) >= w_img or (y + h) >= h_img:
-                    continue
-                overflow_count += 1
-                cv2.rectangle(display, (x-15, y-15), (x+w+15, y+h+15), (0, 100, 255), 3)
-
-        self._debug(show, display, "15 Overflow Final")'''
-
-        return display, overflow_count
+        return display, final_overflow_count
 
     # -----------------------------
     # debug helper
