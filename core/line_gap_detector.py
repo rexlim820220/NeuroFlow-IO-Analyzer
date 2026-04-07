@@ -18,9 +18,11 @@ class LineGapDetector:
     # =========================
     def detect(self, gray, ring_binary, show=False):
 
-        edges = self._detect_edges(ring_binary)
+        edges = self._detect_edges(ring_binary, show)
 
-        contours = self._extract_major_contours(edges, show)
+        self.debug(show, edges, "11 Edges")
+
+        contours = self._extract_major_contours(edges)
 
         gaps, display = self._detect_gaps(contours, edges, gray, show)
 
@@ -29,25 +31,22 @@ class LineGapDetector:
     # =========================
     # Step 1: 邊緣偵測
     # =========================
-    def _detect_edges(self, src):
-        _, binary = cv2.threshold(
-            src, 0, 255, cv2.THRESH_BINARY
-        )
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
-        dilated = cv2.dilate(binary, kernel)
+    def _detect_edges(self, src, show):
 
-        tophat_mask = cv2.morphologyEx(
-            dilated,
-            cv2.MORPH_TOPHAT,
-            kernel
-        )
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 9))
 
-        return cv2.subtract(dilated, tophat_mask)
+        tophat_mask = cv2.morphologyEx(src, cv2.MORPH_TOPHAT, kernel)
+
+        _, refined  = cv2.threshold(tophat_mask, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        self.debug(show, refined, "10 tophat mask")
+
+        return refined
 
     # =========================
     # Step 2: 取主要輪廓
     # =========================
-    def _extract_major_contours(self, edges, show):
+    def _extract_major_contours(self, edges):
         POLY_EPSILON_RATIO = 1e-100
         DYNAMIC_RATIO = 0.1
 
@@ -64,9 +63,9 @@ class LineGapDetector:
                 cv2.drawContours(clean_solid_mask, cn, -1, 255, thickness=cv2.FILLED)
                 kernel = np.ones((1, 1), np.uint8)
                 if w > h * 1.5:
-                    kernel = np.ones((4, 1), np.uint8)
+                    kernel = np.ones((5, 1), np.uint8)
                 elif h > w * 1.5:
-                    kernel = np.ones((1, 4), np.uint8)
+                    kernel = np.ones((1, 5), np.uint8)
                 thickened = cv2.dilate(single_obj_mask, kernel)
                 clean_solid_mask = cv2.bitwise_or(clean_solid_mask, thickened)
 
@@ -87,15 +86,13 @@ class LineGapDetector:
         avg_len = np.mean([c[1] for c in temp_list])
         final_contours = [c[0] for c in temp_list if c[1] > avg_len * DYNAMIC_RATIO]
 
-        self.debug(show, edges, "10 Edges")
-
         return final_contours
 
     # =========================
     # Step 3: 計算 gap
     # =========================
     def _detect_gaps(self, contours, edge, gray, show):
-        MIN_AREA = 10
+        MIN_AREA = 0
 
         image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         img_h, img_w = gray.shape
@@ -118,13 +115,13 @@ class LineGapDetector:
                 'radius': dist_to_center,
                 'angle': np.arctan2(cy - img_center[1], cx - img_center[0])
             })
-            cv2.drawContours(image, [cnt], -1, (0, 255, 0), 2)
+            cv2.drawContours(image, [cnt], -1, (0, 255, 0), -1)
 
         self.debug(show, image, "11 Green contours")
 
         if scored_contours:
             max_area = max(item['area'] for item in scored_contours)
-            scored_contours = [c for c in scored_contours if c['area'] > max_area * 0.01]
+            scored_contours = [c for c in scored_contours if c['area'] > max_area * 0.009]
 
         scored_contours.sort(key=lambda x: x['angle'])
 
@@ -147,13 +144,13 @@ class LineGapDetector:
             p1 = cnt[start_idx][0]
             p2 = cnt[end_idx][0]
 
-            # gap_dist = np.linalg.norm(p1 - p2)
-            # print(f"gap dist = {gap_dist}")
             self._draw_rect(image, p1, p2)
             self.debug(show, image, "12 Red Gaps")
             return 1 if self._check_line_empty(p1, p2, edge) else 0, image
 
-        image = np.zeros((gray.shape[0], gray.shape[1], 3), dtype=np.uint8)
+        print("================ Gap Overflow:================")
+        image = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+        #image = np.zeros((gray.shape[0], gray.shape[1], 3), dtype=np.uint8)
         for k in range(n):
             s1 = scored_contours[k]
             s2 = scored_contours[(k + 1) % n]
@@ -168,26 +165,26 @@ class LineGapDetector:
             import random
             color = (random.randint(150, 255), random.randint(170, 255), random.randint(155, 253))
             cv2.putText(image, f"{k+1}", s1['center'], cv2.FONT_HERSHEY_COMPLEX, 1.2, color, 3, cv2.LINE_AA)
-            cv2.drawContours(image, [s1['cnt']], -1, color, 1)
+            # cv2.drawContours(image, [s1['cnt']], -1, color, 1)
 
             p1 = pts1[min_idx]
             p2 = pts2[idx[min_idx]]
 
-            self._draw_rect(image, p1, p2)
-            #self._draw_line_and_points(image, p1, p2)
-            real_gaps += 1
+            if self._check_line_break(p1, p2, 255-gray, k+1, show):
+                self._draw_rect(image, p1, p2)
+                #self._draw_line_and_points(image, p1, p2)
+                real_gaps += 1
 
         self.debug(show, image, "12 Red Gaps")
         return real_gaps, image
 
-    def _draw_rect(self, image, p1, p2):
+    def _draw_rect(self, image, p1, p2, padding = 25):
         tl_x = int(min(p1[0], p2[0]))
         tl_y = int(min(p1[1], p2[1]))
 
         br_x = int(max(p1[0], p2[0]))
         br_y = int(max(p1[1], p2[1]))
 
-        padding = 25
         tl = (tl_x - padding, tl_y - padding)
         br = (br_x + padding, br_y + padding)
 
@@ -195,13 +192,12 @@ class LineGapDetector:
 
     def _draw_line_and_points(self, image, p1, p2):
         """
-        在 image 上畫出 p1 與 p2 的線段，並用圓圈標記兩點。
-        顏色隨機指定。
+        Draw line segments p1 and p2 and mark the two points with circles.
         """
         import random
-        r = random.randint(100, 255)# 紅色偏高
-        g = random.randint(0, 45)   # 綠色偏低
-        b = random.randint(45, 160) # 藍色偏低
+        r = random.randint(100, 255) # 紅色偏高
+        g = random.randint(0, 45)    # 綠色偏低
+        b = random.randint(45, 160)  # 藍色偏低
         color = (b, g, r)
 
         # 畫線
@@ -215,17 +211,53 @@ class LineGapDetector:
         #mid_point = ((p1[0]+p2[0])//2+10, (p1[1]+p2[1])//2-20)
         #cv2.putText(image, f"{distance:.2f}", mid_point, cv2.FONT_HERSHEY_COMPLEX, 1.2, (255, 127, 9), 3, cv2.LINE_AA)
 
-    def _check_line_empty(self, p1, p2, edge_mask):
-        """
-        沿著 p1 到 p2 採樣，如果中間大部分是黑色，則判定為真缺口
-        """
-        test_line = np.zeros_like(edge_mask)
-        cv2.line(test_line, p1, p2, 255, thickness=1)
+    def _check_line_break(self, p1, p2, edge_mask, id=0, show=False):
+        tl_x = int(min(p1[0], p2[0]))
+        tl_y = int(min(p1[1], p2[1]))
 
-        line_indices = np.where(test_line == 255)
-        if len(line_indices[0]) == 0: return False
+        br_x = int(max(p1[0], p2[0]))
+        br_y = int(max(p1[1], p2[1]))
 
-        samples = edge_mask[line_indices]
+        tl = (tl_x, tl_y)
+        br = (br_x, br_y)
 
-        empty_ratio = np.sum(samples == 0) / len(samples)
-        return empty_ratio > 0.8
+        width = br[0] - tl[0]
+        height = br[1] - tl[1]
+
+        MIN_WIDTH = 3
+        MIN_HEIGHT = 3
+
+        if width < MIN_WIDTH and height < MIN_HEIGHT:
+            return False
+
+        original_image = edge_mask.copy()
+
+        new_image = cv2.line(np.zeros(edge_mask.shape, np.uint8), tuple(p1), tuple(p2), 255, thickness=5)
+
+        mask = cv2.bitwise_and(new_image, original_image)
+
+        coords = cv2.findNonZero(mask)
+        if coords is not None:
+            x, y, w, h = cv2.boundingRect(coords)
+            cropped = mask[y:y+h, x:x+w]
+
+            _, binary_diff = cv2.threshold(cropped, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+
+            self.debug(show, binary_diff, f"12.{id} Gap")
+            h, w = binary_diff.shape[:2]
+
+            if w > h:
+                line_densities = np.sum(binary_diff, axis=1) / (w * 255)
+                max_density = np.max(line_densities)
+            else:
+                line_densities = np.sum(binary_diff, axis=0) / (h * 255)
+                max_density = np.max(line_densities)
+
+            IS_CONNECTED_THRESHOLD = 0.3
+
+            if max_density > IS_CONNECTED_THRESHOLD:
+                print(f"Gap ({id}, {id+1}): 發現貫穿線 (Density: {max_density:.2f}) -> 判定為假斷點")
+                return False
+
+            print(f"Gap ({id}, {id+1}): 無貫穿線 (Density: {max_density:.2f}) -> 判定為真斷點")
+            return True
