@@ -27,7 +27,7 @@ class GlueTrackDetector:
             gray, inner_contour, 30, debug_callback
         )
 
-        final_display_overflow, result_overflow = self.test(
+        final_display_overflow, result_overflow = self.detect_glue_overflow(
             gray, ring_binary, debug_callback
         )
 
@@ -48,6 +48,25 @@ class GlueTrackDetector:
         result_text = " | ".join(result_texts)
 
         final_display = cv2.addWeighted(final_display_gap, 0.5, final_display_overflow, 0.5, 0)
+
+        h, w = final_display.shape[:2]
+
+        (size1, _) = cv2.getTextSize(f"gap count: {result_gap}", cv2.FONT_HERSHEY_COMPLEX, 1.2, 2)
+        (size2, _) = cv2.getTextSize(f"overflow count: {result_overflow}", cv2.FONT_HERSHEY_COMPLEX, 1.2, 2)
+
+        x1 = (w - size1[0]) // 2
+        x2 = (w - size2[0]) // 2
+
+        y1 = h // 2
+        y2 = y1 + size1[1] + 20
+
+        cv2.putText(final_display, f"gap count: {result_gap}", (x1, y1),
+                    cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 0, 255), 2, cv2.LINE_AA)
+
+        cv2.putText(final_display, f"overflow count: {result_overflow}", (x2, y2),
+                    cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 100, 255), 2, cv2.LINE_AA)
+
+        self._debug(debug_callback, final_display, "16 Final Result")
 
         return final_display, result_text
 
@@ -214,52 +233,6 @@ class GlueTrackDetector:
 
     def detect_glue_overflow(self, original_gray, ring_binary, show=True):
 
-        self._debug(show, ring_binary, "13 Before Glue Detect")
-        ring_binary = cv2.adaptiveThreshold(
-            ring_binary, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY, blockSize=11, C=-2
-        )
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        dilated = cv2.dilate(ring_binary, kernel)
-
-        blackhat = cv2.morphologyEx(ring_binary, cv2.MORPH_ERODE, kernel)
-        candidate_mask = cv2.subtract(dilated, blackhat)
-
-        overflow_mask = np.zeros_like(candidate_mask)
-
-        contours, hierarchy = cv2.findContours(
-            candidate_mask,
-            cv2.RETR_TREE,
-            cv2.CHAIN_APPROX_NONE
-        )
-
-        for i in range(len(contours)):
-            if hierarchy[0][i][3] != -1:
-                continue
-
-            child_idx = hierarchy[0][i][2]
-
-            while child_idx != -1:
-                cv2.drawContours(overflow_mask, contours, child_idx, 255, thickness=-1)  # -1 = 填滿
-                child_idx = hierarchy[0][child_idx][0]
-
-        self._debug(show, overflow_mask, "14 processed OV")
-
-        final_overflow_count = 0
-        display = cv2.cvtColor(original_gray, cv2.COLOR_GRAY2BGR)
-        contours, _ = cv2.findContours(overflow_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
-        for cnt in contours:
-            x, y, w, h = cv2.boundingRect(cnt)
-            final_overflow_count += 1
-            cv2.rectangle(display, (x, y), (x+w, y+h), (0, 100, 255), 2)
-
-        self._debug(show, display, "15 Overflow AND Ring")
-
-        return display, final_overflow_count
-
-    def test(self, original_gray, ring_binary, show=True):
-
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 9))
 
         tophat_mask = cv2.morphologyEx(ring_binary, cv2.MORPH_TOPHAT, kernel)
@@ -295,9 +268,9 @@ class GlueTrackDetector:
             print(f"{i+1}-th contour solidity : {solidity:.2f} and aspect_ratio: {aspect_ratio:.2f}")
             final_overflow_count += 1
             cv2.rectangle(display, (x, y), (x+w, y+h), (0, 100, 255), 2)
-            cv2.putText(display, f"{i+1}", (x+w//2, y+h//-15), cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 100, 255), 3, cv2.LINE_AA)
+            #cv2.putText(display, f"{i+1}", (x+w//2, y+h//-15), cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 100, 255), 3, cv2.LINE_AA)
 
-        self._debug(show, display, "15 Final Result")
+        self._debug(show, display, "15 Glue Result")
 
         return display, final_overflow_count
 

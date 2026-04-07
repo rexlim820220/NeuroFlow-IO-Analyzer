@@ -162,16 +162,16 @@ class LineGapDetector:
             d, idx = tree.query(pts1, k=1)
             min_idx = d.argmin()
 
-            import random
-            color = (random.randint(150, 255), random.randint(170, 255), random.randint(155, 253))
-            cv2.putText(image, f"{k+1}", s1['center'], cv2.FONT_HERSHEY_COMPLEX, 1.2, color, 3, cv2.LINE_AA)
+            # import random
+            # color = (random.randint(150, 255), random.randint(170, 255), random.randint(155, 253))
+            # cv2.putText(image, f"{k+1}", s1['center'], cv2.FONT_HERSHEY_COMPLEX, 1.2, color, 3, cv2.LINE_AA)
             # cv2.drawContours(image, [s1['cnt']], -1, color, 1)
 
             p1 = pts1[min_idx]
             p2 = pts2[idx[min_idx]]
 
             if self._check_line_break(p1, p2, 255-gray, k+1, show):
-                self._draw_rect(image, p1, p2)
+                self._draw_rect(image, p1, p2, 5)
                 #self._draw_line_and_points(image, p1, p2)
                 real_gaps += 1
 
