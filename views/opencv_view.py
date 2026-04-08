@@ -36,7 +36,6 @@ class OpenCVPage(BaseView):
         # Debug viewer
         self.debug_viewer = DebugViewer(self)
 
-
     def process_open_image(self):
         path = filedialog.askopenfilename(
             filetypes=[("Image files", "*.jpg *.png *.jpeg")]
@@ -53,6 +52,7 @@ class OpenCVPage(BaseView):
             messagebox.showerror("Error", "Fail to load Image")
             return
 
+        self.original_image = image
         self.current_image = ImageUtils.resize_long_side(image, 2000)
 
         tk_img = ImageUtils.cv2_to_tk(self.current_image)
@@ -69,6 +69,7 @@ class OpenCVPage(BaseView):
 
         result_img, result_text = self.detector.detect(
             self.current_image,
+            self.original_image,
             debug_callback=self.debug_viewer.show_step
         )
 

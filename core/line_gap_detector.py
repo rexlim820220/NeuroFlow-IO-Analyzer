@@ -149,8 +149,7 @@ class LineGapDetector:
             return 1 if self._check_line_empty(p1, p2, edge) else 0, image
 
         print("================ Gap Overflow:================")
-        image = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
-        #image = np.zeros((gray.shape[0], gray.shape[1], 3), dtype=np.uint8)
+        debug = cv2.cvtColor(255-gray, cv2.COLOR_GRAY2BGR)
         for k in range(n):
             s1 = scored_contours[k]
             s2 = scored_contours[(k + 1) % n]
@@ -162,20 +161,20 @@ class LineGapDetector:
             d, idx = tree.query(pts1, k=1)
             min_idx = d.argmin()
 
-            # import random
-            # color = (random.randint(150, 255), random.randint(170, 255), random.randint(155, 253))
-            # cv2.putText(image, f"{k+1}", s1['center'], cv2.FONT_HERSHEY_COMPLEX, 1.2, color, 3, cv2.LINE_AA)
-            # cv2.drawContours(image, [s1['cnt']], -1, color, 1)
+            import random
+            color = (random.randint(150, 255), random.randint(170, 255), random.randint(155, 253))
+            cv2.putText(image, f"{k+1}", s1['center'], cv2.FONT_HERSHEY_COMPLEX, 1.2, color, 3, cv2.LINE_AA)
+            cv2.drawContours(image, [s1['cnt']], -1, color, 1)
 
             p1 = pts1[min_idx]
             p2 = pts2[idx[min_idx]]
 
-            if self._check_line_break(p1, p2, 255-gray, k+1, show):
+            if self._check_line_break(p1, p2, debug, s1, s2, k+1, show):
                 self._draw_rect(image, p1, p2, 5)
-                #self._draw_line_and_points(image, p1, p2)
                 real_gaps += 1
 
-        self.debug(show, image, "12 Red Gaps")
+        self.debug(show, debug, "12 Red Gaps Normal Debug")
+        self.debug(show, image, "13 Red Gaps")
         return real_gaps, image
 
     def _draw_rect(self, image, p1, p2, padding = 25):
@@ -211,53 +210,123 @@ class LineGapDetector:
         #mid_point = ((p1[0]+p2[0])//2+10, (p1[1]+p2[1])//2-20)
         #cv2.putText(image, f"{distance:.2f}", mid_point, cv2.FONT_HERSHEY_COMPLEX, 1.2, (255, 127, 9), 3, cv2.LINE_AA)
 
-    def _check_line_break(self, p1, p2, edge_mask, id=0, show=False):
-        tl_x = int(min(p1[0], p2[0]))
-        tl_y = int(min(p1[1], p2[1]))
+    def _check_line_break(self, p1, p2, debug_img, s1=None, s2=None, id=0, show=False):
+        """
+        Determine if it is a true break point
+        """
+        p1 = np.array(p1, dtype=int)
+        p2 = np.array(p2, dtype=int)
 
-        br_x = int(max(p1[0], p2[0]))
-        br_y = int(max(p1[1], p2[1]))
-
-        tl = (tl_x, tl_y)
-        br = (br_x, br_y)
-
-        width = br[0] - tl[0]
-        height = br[1] - tl[1]
-
-        MIN_WIDTH = 3
-        MIN_HEIGHT = 3
-
-        if width < MIN_WIDTH and height < MIN_HEIGHT:
+        MIN_DIST = 4
+        dist = np.linalg.norm(p2 - p1)
+        if dist < MIN_DIST:
+            print(f"*({id}, {id+1}) ：線段太短({dist:.2f})直接視為非斷點")
             return False
 
-        original_image = edge_mask.copy()
+        mid = (p1 + p2) // 2
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = np.hypot(dx, dy)
+        nx, ny = -dy / length, dx / length if length > 0 else (0, 1)
 
-        new_image = cv2.line(np.zeros(edge_mask.shape, np.uint8), tuple(p1), tuple(p2), 255, thickness=5)
+        sample_length = int(length * 0.45)
+        half = sample_length // 2
 
-        mask = cv2.bitwise_and(new_image, original_image)
+        safety_margin = int(length * 0.15)
+        white_count = 0
+        total = 0
 
-        coords = cv2.findNonZero(mask)
-        if coords is not None:
-            x, y, w, h = cv2.boundingRect(coords)
-            cropped = mask[y:y+h, x:x+w]
+        for t in np.linspace(-half, half, 2 * half + 1):
+            x = int(mid[0] + t * nx)
+            y = int(mid[1] + t * ny)
+            if  (0 <= x < debug_img.shape[1] and
+                0 <= y < debug_img.shape[0] and
+                abs(t) <= half - safety_margin):
+                total += 1
+                if np.any(debug_img[y, x] > 0):
+                    white_count += 1
 
-            _, binary_diff = cv2.threshold(cropped, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        intersection_ratio = white_count / total if total > 0 else 1.0
 
-            self.debug(show, binary_diff, f"12.{id} Gap")
-            h, w = binary_diff.shape[:2]
+        direction_ok = True
+        if s1 is not None and s2 is not None:
+            direction_ok = self._is_line_aligned_with_contours(p1, p2, s1, s2, angle_threshold_deg=40)
 
-            if w > h:
-                line_densities = np.sum(binary_diff, axis=1) / (w * 255)
-                max_density = np.max(line_densities)
+        is_true_gap = (intersection_ratio < 0.4) and direction_ok
+
+        if show:
+            x1, y1 = p1
+            x2, y2 = p2
+            text_margin = 10
+            x_text = min(x1, x2)
+            y_text = min(y1, y2) - text_margin
+            font = cv2.FONT_HERSHEY_COMPLEX
+            font_scale = 0.6
+            thickness = 1
+            line_type = cv2.LINE_AA
+            line_spacing = int(30 * font_scale)
+
+            cv2.line(debug_img, tuple(p1), tuple(p2), (0, 255, 0), 1)
+            cv2.line(debug_img,
+                    (mid[0] - int(half * nx), mid[1] - int(half * ny)),
+                    (mid[0] + int(half * nx), mid[1] + int(half * ny)),
+                    (0, 0, 255), 3)
+            texts = [
+                f"Ratio: {intersection_ratio:.3f}",
+                f"Direction: {direction_ok}"
+            ]
+
+            for i, text in enumerate(texts):
+                y_line = y_text - i * line_spacing
+                cv2.putText(debug_img,
+                            text,
+                            (x_text, y_line),
+                            font,
+                            font_scale,
+                            (255, 100 if i == 0 else 0, 0 if i == 0 else 110),
+                            thickness,
+                            line_type)
+
+        print(f"Gap {id} | Ratio: {intersection_ratio:.3f} | Direction OK: {direction_ok} → {'真斷點' if is_true_gap else '偽斷點'}")
+
+        return is_true_gap
+
+    def _is_line_aligned_with_contours(self, p1, p2, s1, s2, angle_threshold_deg=35):
+        """
+        判斷 p1-p2 連線是否與 s1、s2 兩個連通體的主要走向一致
+        """
+        p1 = np.array(p1, dtype=float)
+        p2 = np.array(p2, dtype=float)
+
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        if abs(dx) < 1 and abs(dy) < 1:
+            return False
+        line_angle = np.arctan2(dy, dx)
+
+        def get_rect_angle(s):
+            _, _, w, h = cv2.boundingRect(s['cnt'])
+            if w > h * 1.5:
+                return 0.0
+            elif h > w * 1.5:
+                return np.pi / 2
             else:
-                line_densities = np.sum(binary_diff, axis=0) / (h * 255)
-                max_density = np.max(line_densities)
+                pts = s['cnt'].reshape(-1, 2)
+                center = np.mean(pts, axis=0)
+                farthest_idx = np.argmax(np.sum((pts - center)**2, axis=1))
+                far_pt = pts[farthest_idx]
+                dx2 = far_pt[0] - center[0]
+                dy2 = far_pt[1] - center[1]
+                return np.arctan2(dy2, dx2)
 
-            IS_CONNECTED_THRESHOLD = 0.3
+        angle1 = get_rect_angle(s1)
+        angle2 = get_rect_angle(s2)
 
-            if max_density > IS_CONNECTED_THRESHOLD:
-                print(f"Gap ({id}, {id+1}): 發現貫穿線 (Density: {max_density:.2f}) -> 判定為假斷點")
-                return False
+        def angle_diff(a, b):
+            d = abs(a - b)
+            return min(d, np.pi - d)
 
-            print(f"Gap ({id}, {id+1}): 無貫穿線 (Density: {max_density:.2f}) -> 判定為真斷點")
-            return True
+        diff1 = angle_diff(line_angle, angle1)
+        diff2 = angle_diff(line_angle, angle2)
+
+        return min(diff1, diff2) < np.deg2rad(angle_threshold_deg)

@@ -12,7 +12,9 @@ class GlueTrackDetector:
             debug=self._debug
         )
 
-    def detect(self, gray, debug_callback=None):
+    def detect(self, gray, original, debug_callback=None):
+
+        print(f"{gray.size} {original.size}")
 
         clean_binary = self._preprocess(gray, debug_callback)
 
@@ -24,7 +26,7 @@ class GlueTrackDetector:
             return gray, "NG (找不到內圍)"
 
         ring_binary = self._build_ring_mask(
-            gray, inner_contour, 30, debug_callback
+            gray, inner_contour, expand_distance=30, show=debug_callback
         )
 
         final_display_overflow, result_overflow = self.detect_glue_overflow(
@@ -66,7 +68,7 @@ class GlueTrackDetector:
         cv2.putText(final_display, f"overflow count: {result_overflow}", (x2, y2),
                     cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 100, 255), 2, cv2.LINE_AA)
 
-        self._debug(debug_callback, final_display, "16 Final Result")
+        self._debug(debug_callback, final_display, "17 Final Result")
 
         return final_display, result_text
 
@@ -229,6 +231,8 @@ class GlueTrackDetector:
 
         self._debug(show, ring_binary, "9 Ring Binary")
 
+        #ring_binary = cv2.resize(ring_binary, None, fx=4, fy=4)
+
         return 255-ring_binary
 
     # -----------------------------
@@ -243,11 +247,11 @@ class GlueTrackDetector:
 
         _, glue_candidate  = cv2.threshold(tophat_mask, 250, 255, cv2.THRESH_BINARY)
 
-        self._debug(show, glue_candidate, "13 Glue Candidate")
+        self._debug(show, glue_candidate, "14 Glue Candidate")
 
         glue_candidate = cv2.dilate(glue_candidate, kernel)
 
-        self._debug(show, glue_candidate, "14 Dilated Candidate")
+        self._debug(show, glue_candidate, "15 Dilated Candidate")
 
         final_overflow_count = 0
         display = cv2.cvtColor(original_gray, cv2.COLOR_GRAY2BGR)
@@ -276,7 +280,7 @@ class GlueTrackDetector:
             cv2.rectangle(display, (x, y), (x+w, y+h), (0, 100, 255), 2)
             cv2.putText(display, f"{i+1}", (x+w//2, y+h//-15), cv2.FONT_HERSHEY_COMPLEX, 1.2, (0, 100, 255), 3, cv2.LINE_AA)
 
-        self._debug(show, display, "15 Glue Result")
+        self._debug(show, display, "16 Glue Result")
 
         return display, final_overflow_count
 
@@ -284,10 +288,10 @@ class GlueTrackDetector:
     # debug helper
     # -----------------------------
 
-    def _debug(self, callback, img, title):
+    def _debug(self, callback, img, title, resize_back=False):
 
         if callback is not None:
-            callback(img, title)
+            callback(img, title, resize_back)
 
 class ImageUtils:
 
@@ -322,7 +326,9 @@ class DebugViewer:
     def __init__(self, view):
         self.view = view
 
-    def show_step(self, img, title):
+    def show_step(self, img, title, resize_back=False):
+        if resize_back:
+            img = cv2.resize(img, None, fx=4, fy=4)
 
         tk_img = ImageUtils.cv2_to_tk(img)
 
