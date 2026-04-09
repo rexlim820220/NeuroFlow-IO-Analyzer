@@ -1,4 +1,5 @@
 import cv2
+import random
 import numpy as np
 from scipy.spatial import KDTree
 
@@ -93,8 +94,8 @@ class LineGapDetector:
     # =========================
     def _detect_gaps(self, contours, edge, gray, show):
         MIN_AREA = 0
-
         image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        debug = cv2.cvtColor(edge, cv2.COLOR_GRAY2BGR)
         img_h, img_w = gray.shape
         img_center = (img_w // 2, img_h // 2)
 
@@ -115,13 +116,13 @@ class LineGapDetector:
                 'radius': dist_to_center,
                 'angle': np.arctan2(cy - img_center[1], cx - img_center[0])
             })
-            cv2.drawContours(image, [cnt], -1, (0, 255, 0), -1)
+            cv2.drawContours(image, [cnt], -1, (0, 255, 0), 2)
 
         self.debug(show, image, "11 Green contours")
 
         if scored_contours:
             max_area = max(item['area'] for item in scored_contours)
-            scored_contours = [c for c in scored_contours if c['area'] > max_area * 0.009]
+            scored_contours = [c for c in scored_contours if c['area'] > max_area * 0.01]
 
         scored_contours.sort(key=lambda x: x['angle'])
 
@@ -149,7 +150,6 @@ class LineGapDetector:
             return 1 if self._check_line_empty(p1, p2, edge) else 0, image
 
         print("================ Gap Overflow:================")
-        debug = cv2.cvtColor(255-gray, cv2.COLOR_GRAY2BGR)
         for k in range(n):
             s1 = scored_contours[k]
             s2 = scored_contours[(k + 1) % n]
@@ -160,18 +160,17 @@ class LineGapDetector:
             tree = KDTree(pts2)
             d, idx = tree.query(pts1, k=1)
             min_idx = d.argmin()
-
-            import random
-            color = (random.randint(150, 255), random.randint(170, 255), random.randint(155, 253))
-            cv2.putText(image, f"{k+1}", s1['center'], cv2.FONT_HERSHEY_COMPLEX, 1.2, color, 3, cv2.LINE_AA)
-            cv2.drawContours(image, [s1['cnt']], -1, color, 1)
-
             p1 = pts1[min_idx]
             p2 = pts2[idx[min_idx]]
 
             if self._check_line_break(p1, p2, debug, s1, s2, k+1, show):
                 self._draw_rect(image, p1, p2, 5)
                 real_gaps += 1
+
+            color = (random.randint(50, 150), random.randint(70, 170), random.randint(55, 155))
+            cv2.drawContours(debug, [s1['cnt']], -1, color, 2)
+            cv2.putText(debug, f"{k+1}", s1['center'], cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 150, 255), 2, cv2.LINE_AA)
+            cv2.putText(debug, f"{k+1}", s1['center'], cv2.FONT_HERSHEY_COMPLEX, 0.6, color, 1, cv2.LINE_AA)
 
         self.debug(show, debug, "12 Red Gaps Normal Debug")
         self.debug(show, image, "13 Red Gaps")
@@ -193,7 +192,6 @@ class LineGapDetector:
         """
         Draw line segments p1 and p2 and mark the two points with circles.
         """
-        import random
         r = random.randint(100, 255) # 紅色偏高
         g = random.randint(0, 45)    # 綠色偏低
         b = random.randint(45, 160)  # 藍色偏低
@@ -218,6 +216,7 @@ class LineGapDetector:
         p2 = np.array(p2, dtype=int)
 
         MIN_DIST = 4
+        MIN_RATIO = 0.1
         dist = np.linalg.norm(p2 - p1)
         if dist < MIN_DIST:
             print(f"*({id}, {id+1}) ：線段太短({dist:.2f})直接視為非斷點")
@@ -229,14 +228,14 @@ class LineGapDetector:
         length = np.hypot(dx, dy)
         nx, ny = -dy / length, dx / length if length > 0 else (0, 1)
 
-        sample_length = int(length * 0.45)
+        sample_length = int(length * 0.5)
         half = sample_length // 2
 
-        safety_margin = int(length * 0.15)
+        safety_margin = int(length * 0.05)
         white_count = 0
         total = 0
 
-        for t in np.linspace(-half, half, 2 * half + 1):
+        for t in np.linspace(-half, half, half + 1):
             x = int(mid[0] + t * nx)
             y = int(mid[1] + t * ny)
             if  (0 <= x < debug_img.shape[1] and
@@ -252,19 +251,19 @@ class LineGapDetector:
         if s1 is not None and s2 is not None:
             direction_ok = self._is_line_aligned_with_contours(p1, p2, s1, s2, angle_threshold_deg=40)
 
-        is_true_gap = (intersection_ratio < 0.4) and direction_ok
+        is_true_gap = (intersection_ratio < MIN_RATIO) and direction_ok
 
         if show:
             x1, y1 = p1
             x2, y2 = p2
             text_margin = 10
-            x_text = min(x1, x2)
-            y_text = min(y1, y2) - text_margin
+            x_text = (x1 + x2) // 2 - text_margin
+            y_text = (y1 + y2) // 2 - text_margin
             font = cv2.FONT_HERSHEY_COMPLEX
             font_scale = 0.6
             thickness = 1
             line_type = cv2.LINE_AA
-            line_spacing = int(30 * font_scale)
+            line_spacing = int(25 * font_scale)
 
             cv2.line(debug_img, tuple(p1), tuple(p2), (0, 255, 0), 1)
             cv2.line(debug_img,
@@ -272,8 +271,8 @@ class LineGapDetector:
                     (mid[0] + int(half * nx), mid[1] + int(half * ny)),
                     (0, 0, 255), 3)
             texts = [
-                f"Ratio: {intersection_ratio:.3f}",
-                f"Direction: {direction_ok}"
+                f"{intersection_ratio:.1f}",
+                f"{'OK' if direction_ok else 'NG'}"
             ]
 
             for i, text in enumerate(texts):
